@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Joker Bluff",
+    "slug": "joker-bluff",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#5B2BD9",
+    "ios": {
+      "supportsTablet": false,
+      "requireFullScreen": true,
+      "bundleIdentifier": "com.jokerbluff.app",
+      "infoPlist": {
+        "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"]
+      }
+    },
+    "android": {
+      "package": "com.jokerbluff.app",
+      "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "pan"
+    },
+    "extra": {
+      "supportsRTL": false
+    },
+    "plugins": ["expo-font"]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "joker-bluff-server",
+  "version": "1.0.0",
+  "description": "Real-time Socket.IO server for the Joker Bluff multiplayer card game (in-memory, no database).",
+  "main": "src/index.js",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.1"
+  }
+}

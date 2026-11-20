@@ -1,0 +1,259 @@
+import React, { useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import CartoonButton from '../common/CartoonButton';
+import TimerBar from './TimerBar';
+import TouchHeatmap, { ScreenMap, analyzeTouches, heatColor } from './TouchHeatmap';
+import { AUDIO_TOGGLE_SIZE } from '../AudioToggle';
+import { colors, fonts, gradients } from '../../theme';
+
+const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
+
+function StatTile({ label, value, sub, tone = colors.yellow }) {
+  return (
+    <View style={styles.tile}>
+      <Text style={[styles.tileValue, { color: tone }]} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      <Text style={styles.tileLabel} numberOfLines={1}>
+        {label}
+      </Text>
+      {!!sub && (
+        <Text style={styles.tileSub} numberOfLines={1}>
+          {sub}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+/** A playful (non-binding!) read of the giver's behaviour. */
+function verdictFor(d, stats) {
+  if (d.auto) return '⏱️ They ran out of time — the server picked the card for them.';
+  if (d.touches.length === 0) return '🤐 No touches at all. Poker face… or a lightning drag.';
+  if (stats.switches >= 3) return `🤔 Bounced between cards ${stats.switches} times. Real hesitation!`;
+  if (d.decisionMs < 2500) return '⚡ Snap decision. Confident — or rehearsed?';
+  if (d.phaseLimitMs && d.decisionMs > d.phaseLimitMs * 0.7) return '🐢 Took their sweet time. Something to hide?';
+  if (stats.cardsTouched === 1 && stats.perSlot[d.offeredSlot] > 0) return '🎯 Went straight for this one. No second thoughts.';
+  if (d.shuffles > 0) return `🔀 Shuffled ${d.shuffles}× while choosing. Trying to throw you off?`;
+  return '🧐 Inconclusive. Trust your gut!';
+}
+
+/** Time axis: every touch as a tick (coloured by slot heat), and the moment they offered. */
+function Timeline({ touches, decisionMs, limitMs }) {
+  const maxT = Math.max(1, limitMs || decisionMs, decisionMs);
+  return (
+    <View style={styles.timeline}>
+      <View style={styles.timelineTrack}>
+        <View style={[styles.timelineUsed, { width: `${(decisionMs / maxT) * 100}%` }]} />
+        {touches.map((t, i) => (
+          <View
+            key={i}
+            style={[styles.tick, { left: `${Math.min(100, (t.t / maxT) * 100)}%`, backgroundColor: heatColor(t.t / Math.max(1, decisionMs)) }]}
+          />
+        ))}
+        <View style={[styles.pickMarker, { left: `${Math.min(100, (decisionMs / maxT) * 100)}%` }]} />
+      </View>
+      <View style={styles.timelineLabels}>
+        <Text style={styles.timelineText}>0s</Text>
+        <Text style={styles.timelineText}>offered @ {secs(decisionMs)}</Text>
+        <Text style={styles.timelineText}>{secs(maxT)}</Text>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * 👁️ LIE DEYE · VAR REVIEW
+ * Full-screen analysis of how the giver chose the card that's on the table.
+ * Rendered inside GameScreen (not a Modal) so the root Audio toggle stays on top;
+ * the header reserves room for it. The receiver can decide right from here.
+ */
+export default function LieDeyeOverlay({ visible, data, giverName, game, clockOffset, busy, width, onDecide, onClose }) {
+  const [replayKey, setReplayKey] = useState(0);
+  const stats = useMemo(() => (data ? analyzeTouches(data.touches, data.handSize) : null), [data]);
+  if (!visible || !data) return null;
+
+  const forcedNext = data.offerNumber === (game.maxOffers || 3) - 1;
+  const contentW = Math.min(width, 520) - 32;
+
+  return (
+    <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={styles.backdrop}>
+      <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
+        <View style={styles.header}>
+          <Pressable onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Minimize Lie Deye analysis">
+            <Ionicons name="chevron-down" size={22} color={colors.night} />
+          </Pressable>
+          <View style={styles.headerTitle}>
+            <Text style={styles.title}>👁️ LIE DEYE</Text>
+            <Text style={styles.subtitle} numberOfLines={1}>
+              VAR review · Offer #{data.offerNumber} · {giverName}
+            </Text>
+          </View>
+          <View style={{ width: AUDIO_TOGGLE_SIZE }} />
+        </View>
+
+        <View style={styles.timer}>
+          <TimerBar deadline={game.deadline} duration={game.phaseDuration} clockOffset={clockOffset} frozen label="decide" compact />
+        </View>
+
+        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <Animated.View entering={SlideInDown.springify().damping(16)} style={[styles.card, { width: contentW + 16 }]}>
+            <View style={styles.tiles}>
+              <StatTile
+                label="Decision time"
+                value={secs(data.decisionMs)}
+                sub={data.phaseLimitMs ? `of ${Math.round(data.phaseLimitMs / 1000)}s` : null}
+                tone={data.decisionMs < 2500 ? colors.teal : data.decisionMs > (data.phaseLimitMs || 15000) * 0.7 ? colors.red : colors.yellow}
+              />
+              <StatTile label="Touches" value={String(data.touches.length)} sub={`${stats.onCards} on cards`} />
+              <StatTile label="Cards touched" value={`${stats.cardsTouched}/${data.handSize}`} />
+              <StatTile label="Switches" value={String(stats.switches)} tone={stats.switches >= 3 ? colors.red : colors.yellow} />
+              <StatTile label="Shuffles" value={String(data.shuffles)} tone={data.shuffles ? colors.pink : colors.yellow} />
+              <StatTile label="Picked slot" value={`#${data.offeredSlot + 1}`} sub="from the left" />
+            </View>
+
+            <Text style={styles.section}>Touch heatmap</Text>
+            <TouchHeatmap
+              touches={data.touches}
+              handSize={data.handSize}
+              offeredSlot={data.offeredSlot}
+              decisionMs={data.decisionMs}
+              width={contentW}
+              replayKey={replayKey}
+            />
+
+            <View style={styles.row}>
+              <View style={styles.flex}>
+                <Text style={styles.section}>Timeline</Text>
+                <Timeline touches={data.touches} decisionMs={data.decisionMs} limitMs={data.phaseLimitMs} />
+                <View style={styles.legend}>
+                  <View style={[styles.legendDot, { backgroundColor: heatColor(0) }]} />
+                  <Text style={styles.legendText}>early</Text>
+                  <View style={[styles.legendDot, { backgroundColor: heatColor(0.5) }]} />
+                  <View style={[styles.legendDot, { backgroundColor: heatColor(1) }]} />
+                  <Text style={styles.legendText}>late</Text>
+                </View>
+                <Pressable onPress={() => setReplayKey((k) => k + 1)} style={styles.replay} accessibilityLabel="Replay touches">
+                  <Ionicons name="play" size={14} color={colors.night} />
+                  <Text style={styles.replayText}>Replay</Text>
+                </Pressable>
+              </View>
+              <View style={styles.mapCol}>
+                <Text style={styles.section}>Screen</Text>
+                <ScreenMap touches={data.touches} decisionMs={data.decisionMs} replayKey={replayKey} />
+              </View>
+            </View>
+
+            <View style={styles.verdict}>
+              <Text style={styles.verdictText}>{verdictFor(data, stats)}</Text>
+            </View>
+          </Animated.View>
+        </ScrollView>
+
+        <View style={styles.footer}>
+          {forcedNext && <Text style={styles.warn}>⚠️ Reject and the 3rd card is forced on you!</Text>}
+          <View style={styles.decisionRow}>
+            <CartoonButton
+              title="Reject"
+              size="md"
+              gradient={gradients.danger}
+              lipColor={colors.darkRed}
+              icon={<Text style={styles.emoji}>✋</Text>}
+              disabled={busy}
+              onPress={() => onDecide(false)}
+              style={styles.flex}
+            />
+            <CartoonButton
+              title="Take it"
+              size="md"
+              gradient={gradients.success}
+              lipColor={colors.darkGreen}
+              icon={<Text style={styles.emoji}>🤲</Text>}
+              disabled={busy}
+              onPress={() => onDecide(true)}
+              style={styles.flex}
+            />
+          </View>
+        </View>
+      </SafeAreaView>
+    </Animated.View>
+  );
+}
+
+const styles = StyleSheet.create({
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(16,6,40,0.94)', zIndex: 80, elevation: 80 },
+  safe: { flex: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 8 },
+  iconBtn: {
+    width: AUDIO_TOGGLE_SIZE,
+    height: AUDIO_TOGGLE_SIZE,
+    borderRadius: AUDIO_TOGGLE_SIZE / 2,
+    borderWidth: 3,
+    borderColor: colors.night,
+    backgroundColor: colors.yellow,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTitle: { flex: 1, alignItems: 'center', paddingHorizontal: 8 },
+  title: { fontFamily: fonts.bold, fontSize: 22, color: colors.yellow, letterSpacing: 2 },
+  subtitle: { fontFamily: fonts.semibold, fontSize: 12, color: colors.cream, opacity: 0.85 },
+  timer: { paddingHorizontal: 14, marginTop: 10 },
+  scroll: { alignItems: 'center', paddingVertical: 12 },
+  card: {
+    borderRadius: 22,
+    borderWidth: 2,
+    borderColor: 'rgba(255,210,63,0.5)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: 8,
+    gap: 8,
+  },
+  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, justifyContent: 'space-between' },
+  tile: {
+    width: '31.5%',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  tileValue: { fontFamily: fonts.bold, fontSize: 20 },
+  tileLabel: { fontFamily: fonts.semibold, fontSize: 10, color: colors.cream, opacity: 0.85 },
+  tileSub: { fontFamily: fonts.regular, fontSize: 9, color: colors.muted },
+  section: { fontFamily: fonts.bold, fontSize: 12, color: colors.cream, letterSpacing: 1, textTransform: 'uppercase', marginTop: 2 },
+  row: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
+  flex: { flex: 1 },
+  mapCol: { alignItems: 'center', gap: 4 },
+  timeline: { marginTop: 6 },
+  timelineTrack: { height: 16, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.1)', overflow: 'visible' },
+  timelineUsed: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)' },
+  tick: { position: 'absolute', top: 2, width: 3, height: 12, marginLeft: -1, borderRadius: 2 },
+  pickMarker: { position: 'absolute', top: -4, width: 4, height: 24, marginLeft: -2, borderRadius: 2, backgroundColor: colors.yellow },
+  timelineLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+  timelineText: { fontFamily: fonts.regular, fontSize: 10, color: colors.muted },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 },
+  legendDot: { width: 9, height: 9, borderRadius: 5 },
+  legendText: { fontFamily: fonts.regular, fontSize: 10, color: colors.muted, marginRight: 4 },
+  replay: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 8,
+    backgroundColor: colors.yellow,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: colors.night,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  replayText: { fontFamily: fonts.bold, fontSize: 12, color: colors.night },
+  verdict: { backgroundColor: colors.yellow, borderRadius: 14, borderWidth: 3, borderColor: colors.night, padding: 10 },
+  verdictText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.night, textAlign: 'center' },
+  footer: { paddingHorizontal: 14, paddingBottom: 8, gap: 6 },
+  warn: { fontFamily: fonts.bold, fontSize: 13, color: colors.pink, textAlign: 'center' },
+  decisionRow: { flexDirection: 'row', gap: 10 },
+  emoji: { fontSize: 20 },
+});

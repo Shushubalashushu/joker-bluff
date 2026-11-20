@@ -1,0 +1,504 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { JokerBluffGame } = require('../src/game/JokerBluffGame');
+const { sanitizeTouches } = require('../src/game/telemetry');
+const { Room } = require('../src/rooms/Room');
+const { SessionStore } = require('../src/sessions/SessionStore');
+
+const ids = (n) => Array.from({ length: n }, (_, i) => `p${i}`);
+
+function newGame(n = 3, opts = {}) {
+  let clock = 1_000_000;
+  const g = new JokerBluffGame(ids(n), {
+    now: () => clock,
+    timers: { REQUEST: 15000, OFFER: 15000, DECISION: 10000, AFK: 3000, LIE_DEYE: 60000 },
+    ...opts,
+  });
+  g.advance = (ms) => (clock += ms);
+  g.start();
+  return g;
+}
+
+/** Drives the game into DECISION for offer #1 with some touch telemetry. */
+function toDecision(g, touches) {
+  g.requestCard(g.activeId, g.ranks[0]);
+  g.advance(4200); // giver "thinks" for 4.2s
+  const hand = g.hands.get(g.holderId);
+  const slot = 2;
+  g.offerCard(g.holderId, hand[slot].id, { touches });
+  return slot;
+}
+
+/** Plays plain accept-the-first-card transactions until `pid` is the active (asking) player. */
+function cycleTo(g, pid) {
+  for (let guard = 0; g.activeId !== pid && guard < 20; guard++) {
+    g.requestCard(g.activeId, g.ranks[0]);
+    g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+    g.decide(g.activeId, true);
+  }
+  assert.equal(g.activeId, pid);
+}
+
+/** Gives the HOLDER all four cards of ranks[0] (plus one odd card). Returns the holder id. */
+function rigWin(g) {
+  const pid = g.holderId;
+  const R = g.ranks[0];
+  const mine = g.hands.get(pid);
+  for (const [other, hand] of g.hands) {
+    if (other === pid) continue;
+    for (let i = 0; i < hand.length; i++) {
+      if (hand[i].rank !== R) continue;
+      const j = mine.findIndex((c) => c.rank !== R);
+      if (j === -1) return pid;
+      [hand[i], mine[j]] = [mine[j], hand[i]];
+    }
+  }
+  return pid;
+}
+
+/** Plays the automatic win through `act(playerId, event, payload)` (engine or Room). Returns the winner id. */
+function playAutoWin(g, act) {
+  const winner = rigWin(g);
+  const odd = g.hands.get(winner).find((c) => c.rank !== g.ranks[0]);
+  act(g.activeId, 'request_card', { rank: g.ranks[1] });
+  act(winner, 'offer_card', { cardId: odd.id });
+  act(g.activeId, 'player_decision', { accept: true });
+  return winner;
+}
+
+const engineAct = (g) => (pid, event, p = {}) => {
+  if (event === 'request_card') return g.requestCard(pid, p.rank);
+  if (event === 'offer_card') return g.offerCard(pid, p.cardId, p);
+  if (event === 'player_decision') return g.decide(pid, p.accept);
+  throw new Error(event);
+};
+
+const sampleTouches = [
+  { s: 0, u: 0.5, v: 0.5, x: 0.2, y: 0.8, t: 500 },
+  { s: 1, u: 0.4, v: 0.6, x: 0.35, y: 0.8, t: 1500 },
+  { s: 2, u: 0.5, v: 0.3, x: 0.5, y: 0.75, t: 3900 },
+];
+
+test('telemetry: sanitizer clamps, drops garbage, sorts and downsamples', () => {
+  const out = sanitizeTouches(
+    [
+      { s: 9, u: 2, v: -1, x: 1.5, y: 0.5, t: 99999 }, // bad slot -> null, x clamped, t clamped
+      { x: 'nope', y: 0.2 }, // dropped
+      null, // dropped
+      { s: 1, u: 0.25, v: 0.75, x: 0.1, y: 0.9, t: 10 },
+    ],
+    { handSize: 5, maxT: 5000 }
+  );
+  assert.equal(out.length, 2);
+  assert.deepEqual(out[0], { s: 1, u: 0.25, v: 0.75, x: 0.1, y: 0.9, t: 10 });
+  assert.deepEqual(out[1], { s: null, u: null, v: null, x: 1, y: 0.5, t: 5000 });
+
+  const many = Array.from({ length: 550 }, (_, i) => ({ x: 0.5, y: 0.5, t: i }));
+  assert.equal(sanitizeTouches(many, { handSize: 5, maxT: 1e6 }).length, 200);
+  assert.deepEqual(sanitizeTouches('junk', { handSize: 5, maxT: 1 }), []);
+});
+
+test('lie deye: every player starts their first game with 4 tokens (use cap stays 3)', () => {
+  const g = newGame(4);
+  for (const id of g.seats) {
+    const w = g.getStateFor(id).lieDeyeWallet;
+    assert.deepEqual(w, { balance: 4, usedThisGame: 0, maxPerGame: 3, usesLeft: 3 }, 'start with 4, but max 3 uses');
+  }
+  assert.ok(g.getStateFor('p0').seats.every((s) => s.tokens === 4 && s.lieDeyeUsesLeft === 3));
+});
+
+test('lie deye: freezes the clock at 60s and reveals telemetry ONLY to the active player', () => {
+  const g = newGame(3);
+  const holder = g.holderId;
+  const active = g.activeId;
+  const bystander = g.seats.find((id) => id !== holder && id !== active);
+  const slot = toDecision(g, sampleTouches);
+
+  assert.equal(g.getStateFor(active).lieDeye, null, 'nothing visible before spending a token');
+  assert.equal(g.getStateFor(active).canUseLieDeye, true);
+  assert.equal(g.getStateFor(bystander).canUseLieDeye, false);
+  g.advance(7000); // 3s left on the 10s decision clock
+
+  const events = g.useLieDeye(active);
+  assert.equal(events[0].type, 'lie_deye_used');
+  assert.equal(events[0].tokensLeft, 3);
+  assert.equal(events[0].usesLeft, 2);
+  assert.equal(g.deadline - g.now(), 60000, 'full 60s from the moment of activation');
+  assert.equal(g.phaseDuration, 60000);
+
+  const va = g.getStateFor(active);
+  assert.equal(va.timeFrozen, true);
+  assert.equal(va.canUseLieDeye, false, 'once per offer');
+  assert.equal(va.lieDeyeWallet.balance, 3);
+  assert.equal(va.lieDeye.decisionMs, 4200, 'server-measured decision time');
+  assert.equal(va.lieDeye.handSize, 5);
+  assert.equal(va.lieDeye.offeredSlot, slot);
+  assert.equal(va.lieDeye.touches.length, 3);
+  assert.equal(va.lieDeye.giverId, holder);
+
+  assert.equal(g.getStateFor(holder).lieDeye, null);
+  assert.equal(g.getStateFor(bystander).lieDeye, null);
+  assert.ok(!JSON.stringify(g.getStateFor(bystander)).includes('"touches"'), 'no telemetry leak');
+  assert.equal(g.getStateFor(bystander).offers[0].lieDeyeUsed, true, 'everyone sees a token was used');
+});
+
+test('lie deye: guards (phase, actor, once per offer)', () => {
+  const g = newGame(3);
+  const active = g.activeId;
+  assert.throws(() => g.useLieDeye(active), { code: 'WRONG_PHASE' });
+  toDecision(g, []);
+  assert.throws(() => g.useLieDeye(g.holderId), { code: 'NOT_YOUR_TURN' });
+  g.useLieDeye(active);
+  assert.throws(() => g.useLieDeye(active), { code: 'ALREADY_READ' });
+
+  // Reject -> offer #2 -> can read again
+  g.decide(active, false);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  g.useLieDeye(active);
+  assert.equal(g.tokens.get(active), 2);
+});
+
+test('lie deye: an empty wallet is refused (NO_TOKENS) and the clock is untouched', () => {
+  const g = newGame(3, { tokenBalances: new Map([['p0', 0], ['p1', 0], ['p2', 0]]) });
+  const active = g.activeId;
+  toDecision(g, []);
+  assert.equal(g.getStateFor(active).canUseLieDeye, false);
+  assert.throws(() => g.useLieDeye(active), { code: 'NO_TOKENS' });
+  assert.equal(g.deadline - g.now(), 10000, 'clock untouched');
+});
+
+test('lie deye: max 3 uses per match even with a bigger balance (LIE_DEYE_LIMIT)', () => {
+  const g = newGame(3, { tokenBalances: { p0: 5, p1: 5, p2: 5 } });
+  const me = g.activeId;
+
+  // Transaction 1: read offer #1 and #2, the 3rd is forced.
+  g.requestCard(me, g.ranks[0]);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  g.useLieDeye(me);
+  g.decide(me, false);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  g.useLieDeye(me);
+  g.decide(me, false);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {}); // forced -> transfer
+
+  // Round the table until I'm asking again.
+  cycleTo(g, me);
+  g.requestCard(me, g.ranks[0]);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  g.useLieDeye(me); // 3rd use
+  assert.deepEqual(g.getStateFor(me).lieDeyeWallet, { balance: 2, usedThisGame: 3, maxPerGame: 3, usesLeft: 0 });
+
+  g.decide(me, false);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  assert.equal(g.getStateFor(me).canUseLieDeye, false);
+  assert.throws(() => g.useLieDeye(me), { code: 'LIE_DEYE_LIMIT' });
+  assert.equal(g.tokens.get(me), 2, 'the remaining balance is kept for the next game');
+});
+
+test('lie deye: telemetry disappears once the decision is made', () => {
+  const g = newGame(3);
+  const active = g.activeId;
+  toDecision(g, sampleTouches);
+  g.useLieDeye(active);
+  g.decide(active, false);
+  assert.equal(g.getStateFor(active).lieDeye, null);
+  assert.equal(g.getStateFor(active).timeFrozen, false);
+});
+
+test('timeout auto-offers are flagged and carry no touches', () => {
+  const g = newGame(3);
+  g.handleTimeout(); // REQUEST
+  g.handleTimeout(); // OFFER (auto)
+  g.useLieDeye(g.activeId);
+  const ld = g.getStateFor(g.activeId).lieDeye;
+  assert.equal(ld.auto, true);
+  assert.deepEqual(ld.touches, []);
+});
+
+// ------------------------------------------------------------------ Shuffle Hand
+
+test('shuffle: reorders my hand only, keeps the same cards, works in any phase', () => {
+  const g = newGame(4);
+  const bystander = g.seats.find((id) => id !== g.holderId && id !== g.activeId);
+  const before = g.hands.get(bystander).map((c) => c.id);
+  const otherBefore = g.hands.get(g.holderId).map((c) => c.id).join();
+
+  assert.deepEqual(g.shuffleHand(bystander), [], 'private: no public events');
+  const after = g.hands.get(bystander).map((c) => c.id);
+  assert.notDeepEqual(after, before, 'order changed');
+  assert.deepEqual([...after].sort(), [...before].sort(), 'same cards');
+  assert.equal(g.hands.get(g.holderId).map((c) => c.id).join(), otherBefore, 'nobody else affected');
+
+  toDecision(g, []); // another player's DECISION phase - still allowed
+  g.shuffleHand(bystander);
+  g.shuffleHand(g.activeId);
+  assert.equal(g.getStateFor(bystander).hand.length, 4);
+});
+
+test('shuffle: the giver shuffling while choosing is counted in the Lie Deye report', () => {
+  const g = newGame(3);
+  g.requestCard(g.activeId, g.ranks[0]);
+  g.shuffleHand(g.holderId);
+  g.shuffleHand(g.holderId);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  g.useLieDeye(g.activeId);
+  assert.equal(g.getStateFor(g.activeId).lieDeye.shuffles, 2);
+
+  // The counter resets for the next offer.
+  g.decide(g.activeId, false);
+  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+  g.useLieDeye(g.activeId);
+  assert.equal(g.getStateFor(g.activeId).lieDeye.shuffles, 0);
+});
+
+test('shuffle: touches keyed by card id land on the card\'s FINAL slot after a mid-decision shuffle', () => {
+  const g = newGame(3);
+  g.requestCard(g.activeId, g.ranks[0]);
+  const holder = g.holderId;
+  const touched = g.hands.get(holder)[0].id;
+  const touches = [{ c: touched, u: 0.5, v: 0.5, x: 0.3, y: 0.8, t: 100 }];
+  g.shuffleHand(holder);
+  const finalSlot = g.hands.get(holder).findIndex((c) => c.id === touched);
+  const offered = g.hands.get(holder).find((c) => c.id !== touched);
+  g.advance(1000);
+  g.offerCard(holder, offered.id, { touches });
+  g.useLieDeye(g.activeId);
+  const ld = g.getStateFor(g.activeId).lieDeye;
+  assert.equal(ld.touches[0].s, finalSlot);
+  assert.ok(!('c' in ld.touches[0]), 'card ids are never sent back (would leak identity)');
+});
+
+test('shuffle: refused once the game is over', () => {
+  const g = newGame(4);
+  const winner = playAutoWin(g, engineAct(g));
+  assert.equal(g.isFinished, true);
+  assert.throws(() => g.shuffleHand(winner), { code: 'GAME_OVER' });
+});
+
+// ------------------------------------------------------------------ Room: leave / end game
+
+function makeRoom(n = 4) {
+  const sessions = new SessionStore();
+  const sent = [];
+  const transport = {
+    toRoom: (code, event, payload) => sent.push({ to: 'room', event, payload }),
+    toPlayer: (pid, event, payload) => sent.push({ to: pid, event, payload }),
+  };
+  const room = new Room({ code: 'ABCDE', sessions, transport });
+  const players = Array.from({ length: n }, (_, i) => {
+    const s = sessions.create();
+    s.nickname = `P${i}`;
+    s.socketId = `sock${i}`;
+    s.roomCode = 'ABCDE';
+    room.addPlayer(s);
+    return s;
+  });
+  return { room, sessions, players, sent };
+}
+
+test('room: a player leaving mid-match terminates it and returns everyone to the lobby', () => {
+  const { room, players, sent } = makeRoom(5);
+  room.startGame(players[0].playerId);
+  assert.equal(room.status, 'playing');
+
+  room.removePlayer(players[4].playerId);
+  assert.equal(room.status, 'waiting');
+  assert.equal(room.game, null);
+  assert.equal(room.players.length, 4);
+  const abort = sent.find((m) => m.event === 'game_event' && m.payload.type === 'game_aborted');
+  assert.equal(abort.payload.reason, 'player_left');
+  assert.equal(abort.payload.nickname, 'P4');
+  const lastGameState = sent.filter((m) => m.event === 'game_state' && m.to === players[0].playerId).pop();
+  assert.equal(lastGameState.payload, null, 'remaining players get game_state null');
+
+  // Remaining players can start a fresh match with a re-sized deck.
+  room.startGame(players[0].playerId);
+  assert.equal(room.game.getStateFor(players[0].playerId).deckSize, 17);
+  room.destroy();
+});
+
+test('room: host leaving mid-match hands host to someone else', () => {
+  const { room, players } = makeRoom(4);
+  room.startGame(players[0].playerId);
+  room.removePlayer(players[0].playerId);
+  assert.equal(room.hostId, players[1].playerId);
+  assert.equal(room.status, 'waiting');
+  room.destroy();
+});
+
+test('room: only the host can End Game; it returns everyone to the lobby', () => {
+  const { room, players, sent } = makeRoom(4);
+  assert.throws(() => room.endGame(players[0].playerId), { code: 'NOT_PLAYING' });
+  room.startGame(players[0].playerId);
+  assert.throws(() => room.endGame(players[1].playerId), { code: 'NOT_HOST' });
+  room.endGame(players[0].playerId);
+  assert.equal(room.status, 'waiting');
+  assert.equal(room.players.length, 4, 'nobody loses their seat');
+  const abort = sent.filter((m) => m.payload?.type === 'game_aborted').pop();
+  assert.equal(abort.payload.reason, 'host_ended');
+  room.destroy();
+});
+
+test('room: disconnect keeps the seat during the grace period, reconnect cancels it', () => {
+  const { room, players, sessions } = makeRoom(4);
+  room.startGame(players[0].playerId);
+  players[1].socketId = null;
+  room.onPlayerDisconnected(players[1].playerId);
+  assert.equal(room.status, 'playing');
+  assert.equal(room.graceTimers.size, 1);
+  players[1].socketId = 'sock1b';
+  room.addPlayer(sessions.getByPlayerId(players[1].playerId));
+  assert.equal(room.graceTimers.size, 0);
+  assert.equal(room.status, 'playing');
+  room.destroy();
+});
+
+// ------------------------------------------------------------------ Room: Lie Deye economy
+
+test('room economy: unused tokens carry over to the next game (spent ones stay spent)', () => {
+  const { room, players } = makeRoom(4);
+  assert.ok(room.publicState().players.every((p) => p.tokens === 4), 'first game: 4 each');
+
+  room.startGame(players[0].playerId);
+  const g = room.game;
+  const me = g.activeId;
+  room.act(me, 'request_card', { rank: g.ranks[0] });
+  room.act(g.holderId, 'offer_card', { cardId: g.hands.get(g.holderId)[0].id });
+  room.act(me, 'use_lie_deye');
+  assert.equal(room.tokenBank.get(me), 3, 'bank updated immediately');
+
+  room.endGame(players[0].playerId); // aborted match
+  assert.equal(room.publicState().players.find((p) => p.id === me).tokens, 3);
+
+  room.startGame(players[0].playerId);
+  const w = room.game.getStateFor(me).lieDeyeWallet;
+  assert.equal(w.balance, 3, 'balance carried over');
+  assert.equal(w.usedThisGame, 0, 'per-match counter resets');
+  room.destroy();
+});
+
+test('room economy: the winner gets +1 token for the next game, paid exactly once', () => {
+  const { room, players, sent } = makeRoom(4);
+  room.startGame(players[0].playerId);
+  const g = room.game;
+  assert.throws(() => room.act(g.activeId, 'declare_win'), { code: 'UNKNOWN_ACTION' });
+  const winner = playAutoWin(g, (pid, event, p) => room.act(pid, event, p));
+
+  assert.equal(room.status, 'finished');
+  assert.equal(room.tokenBank.get(winner), 5);
+  const bonus = sent.filter((m) => m.payload?.type === 'lie_deye_bonus');
+  assert.equal(bonus.length, 1);
+  assert.deepEqual(
+    { playerId: bonus[0].payload.playerId, amount: bonus[0].payload.amount, balance: bonus[0].payload.balance },
+    { playerId: winner, amount: 1, balance: 5 }
+  );
+  assert.equal(g.getStateFor(winner).lieDeyeWallet.balance, 5, 'results screen shows the new balance');
+
+  room.broadcast();
+  room.onConnectionChanged();
+  assert.equal(room.tokenBank.get(winner), 5, 'no double payout');
+
+  room.startGame(players[0].playerId); // play again
+  assert.equal(room.game.getStateFor(winner).lieDeyeWallet.balance, 5);
+  assert.equal(room.game.getStateFor(winner).lieDeyeWallet.usesLeft, 3, 'still capped at 3 per game');
+  room.destroy();
+});
+
+test('room economy: leaving and rejoining does not reset a spent balance', () => {
+  const { room, players, sessions } = makeRoom(4);
+  room.tokenBank.set(players[2].playerId, 1);
+  room.removePlayer(players[2].playerId);
+  room.addPlayer(sessions.getByPlayerId(players[2].playerId));
+  assert.equal(room.tokenBalance(players[2].playerId), 1);
+  room.destroy();
+});
+
+test('room: Shuffle Hand ignores the phase deadline and only updates the shuffler', () => {
+  const { room, players, sent } = makeRoom(4);
+  room.startGame(players[0].playerId);
+  const me = players[1].playerId;
+  room.game.deadline = Date.now() - 10_000; // the turn clock already ran out
+  assert.throws(() => room.act(room.game.activeId, 'request_card', { rank: room.game.ranks[0] }), { code: 'TOO_LATE' });
+
+  sent.length = 0;
+  room.shuffleHand(me);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, me);
+  assert.equal(sent[0].event, 'game_state');
+  room.destroy();
+  assert.throws(() => room.shuffleHand(me), { code: 'NOT_PLAYING' });
+});
+
+// ------------------------------------------------------------------ device-testing fixes
+
+test('room: a match needs at least 4 players (start and play-again are refused below that)', () => {
+  const sessions = new SessionStore();
+  const transport = { toRoom: () => {}, toPlayer: () => {} };
+  const room = new Room({ code: 'MINPL', sessions, transport });
+  const add = (i) => {
+    const s = sessions.create();
+    s.nickname = `P${i}`;
+    s.socketId = `s${i}`;
+    s.roomCode = 'MINPL';
+    room.addPlayer(s);
+    return s;
+  };
+  const host = add(0);
+  add(1);
+  add(2);
+  assert.equal(room.publicState().minPlayers, 4);
+  assert.throws(() => room.startGame(host.playerId), { code: 'NOT_ENOUGH_PLAYERS' });
+  assert.equal(room.status, 'waiting');
+  add(3);
+  room.startGame(host.playerId);
+  assert.equal(room.status, 'playing');
+  room.destroy();
+});
+
+test('timeout: the auto-offer is a RANDOM card from the hand (not the requested rank / Joker)', () => {
+  // rng sequence lets us steer which index the fallback picks.
+  const picks = new Set();
+  for (const r of [0, 0.21, 0.41, 0.61, 0.81, 0.99]) {
+    const g = newGame(4);
+    g.requestCard(g.activeId, g.ranks[0]);
+    const hand = g.hands.get(g.holderId).slice();
+    g.rng = () => r;
+    const events = g.handleTimeout();
+    const offered = g.offers[0].card;
+    assert.equal(offered.id, hand[Math.floor(r * hand.length)].id, 'exactly the rng-chosen slot');
+    assert.equal(events[0].type, 'timeout');
+    assert.equal(g.offers[0].auto, true);
+    picks.add(hand.findIndex((c) => c.id === offered.id));
+  }
+  assert.equal(picks.size, 5, 'every slot of a 5-card hand can be picked');
+});
+
+test('shuffle: a client-proposed order is applied verbatim when it is a valid permutation', () => {
+  const g = newGame(4);
+  const me = g.seats.find((id) => id !== g.holderId);
+  const ids0 = g.hands.get(me).map((c) => c.id);
+  const proposed = [...ids0].reverse();
+  g.shuffleHand(me, proposed);
+  assert.deepEqual(g.hands.get(me).map((c) => c.id), proposed);
+
+  // Invalid proposals (foreign id / duplicates / wrong length) -> server-side random shuffle, same cards.
+  for (const bad of [[...proposed.slice(1), 'c_fake'], [proposed[0], ...proposed.slice(0, -1)], proposed.slice(1), 'nope']) {
+    const before = g.hands.get(me).map((c) => c.id);
+    g.shuffleHand(me, bad);
+    const after = g.hands.get(me).map((c) => c.id);
+    assert.deepEqual([...after].sort(), [...before].sort());
+  }
+});
+
+test('config: dev testing mode stretches every phase timer to 10 minutes; Lie Deye starts at 4, capped at 3', () => {
+  const config = require('../src/config');
+  if (config.DEV_TESTING_MODE) {
+    for (const k of ['REQUEST', 'OFFER', 'DECISION', 'LIE_DEYE']) assert.equal(config.TIMERS[k], 600000, k);
+  }
+  assert.equal(config.LIE_DEYE.STARTING_TOKENS, 4);
+  assert.equal(config.LIE_DEYE.MAX_USES_PER_GAME, 3);
+  assert.ok(config.MIN_PLAYERS >= 4);
+});
