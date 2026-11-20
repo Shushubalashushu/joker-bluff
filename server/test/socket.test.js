@@ -183,6 +183,32 @@ async function scenario(url, clients) {
   // Bystander must never have seen any of the transferred card ids.
   assert.equal(bystander.game.lastTransfer.cardId, null);
 
+  // Both face-down slots are valid during the second decision.
+  for (const offerIndex of [0, 1]) {
+    const turn = active.game.turn;
+    await until(() => clients.every((c) => c.game?.turn === turn));
+    const giver = byId[active.game.holderId];
+    const asker = byId[active.game.activeId];
+    const observer = clients.find((c) => c !== giver && c !== asker);
+    const hand = giver.game.hand;
+    const offers = hand.filter((card) => !findWinningRank(hand.filter((other) => other.id !== card.id))).slice(0, 2);
+    assert.equal((await asker.emit('request_card', { rank: asker.game.ranks[0] })).ok, true);
+    await until(() => giver.game.phase === 'OFFER');
+    assert.equal((await giver.emit('offer_card', { cardId: offers[0].id })).ok, true);
+    await until(() => asker.game.phase === 'DECISION');
+    assert.equal((await asker.emit('player_decision', { accept: false })).ok, true);
+    await until(() => giver.game.phase === 'OFFER');
+    assert.equal((await giver.emit('offer_card', { cardId: offers[1].id })).ok, true);
+    await until(() => asker.game.phase === 'DECISION');
+    assert.deepEqual(asker.game.offers.map(({ card }) => card), [null, null]);
+    assert.equal((await asker.emit('player_decision', { accept: true, offerIndex })).ok, true);
+    await until(() => clients.every((c) => c.game?.turn === turn + 1));
+    assert.equal(asker.game.lastTransfer.offerNumber, offerIndex + 1);
+    assert.equal(asker.game.lastTransfer.cardId, offers[offerIndex].id);
+    assert.ok(giver.game.hand.some((card) => card.id === offers[1 - offerIndex].id));
+    assert.equal(observer.game.lastTransfer.cardId, null);
+  }
+
   // --- reconnect with the secret token keeps the seat and the hand
   const handBefore = bystander.game.hand.map((c) => c.id).sort();
   const token = bystander.session.token;

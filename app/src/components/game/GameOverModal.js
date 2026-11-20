@@ -8,6 +8,7 @@ import PlayingCard from './PlayingCard';
 import { LIE_DEYE } from '../../config';
 import { useI18n } from '../../i18n';
 import { colors, fonts, gradients, cartoonShadow } from '../../theme';
+import { viewport, verticalScrollProps } from '../../theme/layout';
 
 /**
  * End-of-round results: winner, Joker loser, every hand revealed, and the
@@ -38,7 +39,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
 
   return (
     <Modal visible={visible} transparent animationType="fade" statusBarTranslucent>
-      <SafeAreaProvider>
+      <SafeAreaProvider style={viewport}>
         <SafeAreaView style={styles.backdrop} edges={['top', 'bottom', 'left', 'right']}>
           <Animated.View entering={BounceIn.duration(700)} style={styles.card}>
             <Text style={styles.confetti}>🎉 ✨ 🎊</Text>
@@ -71,7 +72,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
               )}
             </View>
 
-            <ScrollView bounces={false} overScrollMode="never" style={styles.hands} contentContainerStyle={{ gap: 8 }}>
+            <ScrollView {...verticalScrollProps} style={styles.hands} contentContainerStyle={{ gap: 8 }}>
               {Object.entries(result.hands).map(([pid, cards], i) => (
                 <Animated.View key={pid} entering={FadeInUp.delay(150 + i * 80)} style={styles.handRow}>
                   <View style={styles.handWho}>
@@ -138,7 +139,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
 const styles = StyleSheet.create({
   error: { fontFamily: fonts.semibold, color: colors.darkRed, textAlign: 'center' },
   verified: { fontFamily: fonts.bold, color: colors.darkBlue, textAlign: 'center' },
-  backdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 18 },
+  backdrop: { ...viewport, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 18 },
   card: {
     width: '100%',
     maxWidth: 400,

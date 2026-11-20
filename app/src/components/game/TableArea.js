@@ -8,6 +8,11 @@ import { useI18n } from '../../i18n';
 import { rich } from '../../i18n/rich';
 import { colors, fonts, gradients } from '../../theme';
 
+const FELT_BORDER = 4;
+const FELT_PADDING = 6;
+const INNER_BORDER = 2;
+const INNER_PADDING = 8;
+
 /**
  * 🔵✔ "System Verified Forced Bluff" stamp. The server confirmed the giver owns
  * NO card of the requested rank, so this face-down card is a bluff by necessity.
@@ -15,7 +20,7 @@ import { colors, fonts, gradients } from '../../theme';
  */
 function VerifiedStamp({ rank, cardSize }) {
   const { t, textStyle } = useI18n();
-  const small = cardSize === 'sm';
+  const small = cardSize !== 'md';
   return (
     <Animated.View
       entering={ZoomIn.springify().damping(10)}
@@ -37,27 +42,27 @@ function VerifiedStamp({ rank, cardSize }) {
   );
 }
 
-function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, requestedRank }) {
+function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, requestedRank, available }) {
   const { t, textStyle } = useI18n();
   const s = CARD_SIZES[cardSize] || CARD_SIZES.md;
   if (!offer) {
     return (
-      <View style={styles.slotCol}>
+      <View style={[styles.slotCol, { width: s.w }]}>
         <View style={[styles.emptySlot, { width: s.w, height: s.h, borderRadius: s.radius }]}>
           <Text style={[styles.slotNumber, { fontSize: s.rank + 4 }]}>{number}</Text>
         </View>
-        <Text style={[styles.slotLabel, forcedSlot && styles.forcedLabel, textStyle]}>
+        <Text style={[styles.slotLabel, forcedSlot && styles.forcedLabel, textStyle]} numberOfLines={1} adjustsFontSizeToFit>
           {forcedSlot ? t('table.forced') : t('table.offerN', { n: number })}
         </Text>
       </View>
     );
   }
-  const rejected = offer.status === 'rejected';
+  const rejected = offer.status === 'rejected' && !available;
   return (
-    <View style={styles.slotCol}>
+    <View style={[styles.slotCol, { width: s.w }]}>
       <Animated.View entering={ZoomIn.springify().damping(12)} style={rejected && styles.rejectedCard}>
         {/* Holder sees their own face-down cards (unless Anti-spy is on); everyone else gets null from the server */}
-        <PlayingCard card={showFace ? offer.card : null} size={cardSize} highlighted={offer.status === 'pending'} />
+        <PlayingCard card={showFace ? offer.card : null} size={cardSize} highlighted={available || offer.status === 'pending'} />
         {offer.verifiedNoCard && <VerifiedStamp rank={requestedRank} cardSize={cardSize} />}
         {rejected && (
           <View style={styles.stamp}>
@@ -70,8 +75,8 @@ function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, requestedRan
           </View>
         )}
       </Animated.View>
-      <Text style={[styles.slotLabel, forcedSlot && styles.forcedLabel, textStyle]}>
-        {rejected ? t('table.rejected') : forcedSlot ? t('table.forced') : t('table.pending')}
+      <Text style={[styles.slotLabel, (available || forcedSlot) && styles.forcedLabel, textStyle]} numberOfLines={1} adjustsFontSizeToFit>
+        {available ? t('table.offerN', { n: number }) : rejected ? t('table.rejected') : forcedSlot ? t('table.forced') : t('table.pending')}
       </Text>
     </View>
   );
@@ -82,11 +87,15 @@ function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, requestedRan
  * 3 face-down offer slots (slot 3 = forced, auto-accepted).
  * `concealed` (Anti-spy) also hides the holder's own offered faces.
  */
-export default function TableArea({ game, nameOf, myId, cardSize = 'md', concealed = false, compact = false }) {
+export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, concealed = false, compact = false }) {
   const { t, textStyle } = useI18n();
   const holderName = nameOf(game.holderId);
   const activeName = nameOf(game.activeId);
   const isHolderView = myId === game.holderId;
+  const choosing = myId === game.activeId && game.phase === PHASES.DECISION && game.offers.length === 2;
+  const slotGap = compact || width < 235 ? 6 : 14;
+  const cardWidth = (width - 2 * (FELT_BORDER + FELT_PADDING + INNER_BORDER + INNER_PADDING + slotGap)) / game.maxOffers;
+  const fittedSize = [cardSize, 'sm', 'xs'].find((size) => CARD_SIZES[size].w <= cardWidth) ?? 'xs';
   const transfer = game.lastTransfer;
   const showVerifiedTransfer = game.phase === PHASES.REQUEST && transfer?.forced && transfer.verifiedNoCard;
 
@@ -95,11 +104,11 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', conceal
       <View style={[styles.inner, compact && styles.innerCompact]}>
         {/* Trade direction is a physical arrow (giver -> asker): stays LTR in every language */}
         <View style={styles.tradeRow}>
-          <Text style={[styles.tradeName, textStyle]} numberOfLines={1}>
+          <Text style={styles.tradeName} numberOfLines={1} ellipsizeMode="tail">
             {game.holderId === myId ? t('common.you') : holderName}
           </Text>
           <Text style={styles.arrow}>🎴 ➜</Text>
-          <Text style={[styles.tradeName, textStyle]} numberOfLines={1}>
+          <Text style={styles.tradeName} numberOfLines={1} ellipsizeMode="tail">
             {game.activeId === myId ? t('common.you') : activeName}
           </Text>
         </View>
@@ -128,7 +137,7 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', conceal
           </View>
         )}
 
-        <View style={[styles.slots, compact && { gap: 10 }]}>
+        <View style={[styles.slots, { gap: slotGap }]}>
           {[1, 2, 3].map((n) => (
             <OfferSlot
               key={n}
@@ -136,7 +145,8 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', conceal
               offer={game.offers[n - 1]}
               forcedSlot={n === game.maxOffers}
               showFace={isHolderView && !concealed}
-              cardSize={cardSize}
+              cardSize={fittedSize}
+              available={choosing && n <= 2}
               requestedRank={game.requestedRank}
             />
           ))}
@@ -149,9 +159,9 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', conceal
 const styles = StyleSheet.create({
   felt: {
     borderRadius: 36,
-    borderWidth: 4,
+    borderWidth: FELT_BORDER,
     borderColor: colors.night,
-    padding: 6,
+    padding: FELT_PADDING,
     shadowColor: colors.night,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
@@ -160,17 +170,17 @@ const styles = StyleSheet.create({
   },
   inner: {
     borderRadius: 30,
-    borderWidth: 2,
+    borderWidth: INNER_BORDER,
     borderStyle: 'dashed',
     borderColor: 'rgba(255,255,255,0.5)',
     paddingVertical: 10,
-    paddingHorizontal: 8,
+    paddingHorizontal: INNER_PADDING,
     alignItems: 'center',
     gap: 8,
   },
   innerCompact: { paddingVertical: 6, gap: 5 },
   tradeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%' },
-  tradeName: { fontFamily: fonts.bold, color: colors.white, fontSize: 15, maxWidth: 110 },
+  tradeName: { flexShrink: 1, minWidth: 0, overflow: 'hidden', fontFamily: fonts.bold, color: colors.white, fontSize: 15, maxWidth: 110 },
   arrow: { fontSize: 15, color: colors.yellow },
   bubble: {
     backgroundColor: colors.white,
@@ -187,7 +197,7 @@ const styles = StyleSheet.create({
   bubbleRank: { fontFamily: fonts.bold, color: colors.pink, fontSize: 20 },
   bubbleIdle: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'transparent' },
   bubbleIdleText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.white },
-  slots: { flexDirection: 'row', gap: 14, marginTop: 2 },
+  slots: { flexDirection: 'row', marginTop: 2 },
   slotCol: { alignItems: 'center', gap: 4 },
   emptySlot: {
     borderWidth: 3,
@@ -197,7 +207,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   slotNumber: { fontFamily: fonts.bold, color: 'rgba(255,255,255,0.6)' },
-  slotLabel: { fontFamily: fonts.bold, fontSize: 11, color: colors.white, letterSpacing: 0.5 },
+  slotLabel: { width: '100%', textAlign: 'center', fontFamily: fonts.bold, fontSize: 11, color: colors.white },
   forcedLabel: { color: colors.yellow },
   rejectedCard: { opacity: 0.6, transform: [{ rotate: '-6deg' }] },
   stamp: {

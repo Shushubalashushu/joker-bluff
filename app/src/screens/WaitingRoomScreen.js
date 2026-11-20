@@ -14,6 +14,7 @@ import useResponsive from '../hooks/useResponsive';
 import { describeAbort } from '../utils/describeEvent';
 import { LIE_DEYE, MIN_PLAYERS } from '../config';
 import { colors, fonts, gradients, cartoonShadow } from '../theme';
+import { viewport, verticalScrollProps } from '../theme/layout';
 
 // Grayed-out look for the host's Start button while the table is short-handed.
 const DISABLED_GRADIENT = ['#C9C3D9', '#A59DBB'];
@@ -25,9 +26,9 @@ function PlayerTile({ player, isMe, avatarSize }) {
     <Animated.View entering={ZoomIn.springify()} style={[styles.tile, isMe && styles.tileMe]}>
       {player.isHost && <Text style={styles.crown}>👑</Text>}
       <Avatar avatarId={player.avatarId} size={avatarSize} style={!player.connected && { opacity: 0.4 }} />
-      <Text style={styles.tileName} numberOfLines={1}>
-        {player.nickname}
-      </Text>
+      <View style={styles.tileNameFrame}>
+        <Text style={styles.tileName} numberOfLines={1} ellipsizeMode="tail">{player.nickname}</Text>
+      </View>
       <Text style={[styles.tileSub, textStyle]}>{t(isMe ? 'common.you' : player.connected ? 'waiting.ready' : 'waiting.offline')}</Text>
       {typeof player.tokens === 'number' && (
         <View style={styles.tokenPill} accessibilityLabel={t('ld.a11yTokens', { count: player.tokens })}>
@@ -112,7 +113,7 @@ export default function WaitingRoomScreen() {
 
         <AbortBanner notice={notice} playerId={playerId} onClose={clearNotice} />
 
-        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={[styles.content, r.compact && { gap: 10, padding: 14 }]}>
+        <ScrollView {...verticalScrollProps} contentContainerStyle={[styles.content, r.compact && { gap: 10, padding: 14 }]}>
           {/* Room code */}
           <Animated.View entering={FadeIn} style={styles.codeCard}>
             <Text style={[styles.codeLabel, textStyle]}>{t('waiting.roomCode')}</Text>
@@ -195,8 +196,8 @@ export default function WaitingRoomScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  safe: { flex: 1 },
+  root: viewport,
+  safe: viewport,
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 4 },
   headerTitle: { flexShrink: 1, fontFamily: fonts.bold, fontSize: 24, color: colors.white, textShadowColor: colors.night, textShadowOffset: { width: 2, height: 2 }, textShadowRadius: 0 },
   iconBtn: {
@@ -300,7 +301,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   crown: { position: 'absolute', top: -14, fontSize: 24 },
-  tileName: { fontFamily: fonts.bold, fontSize: 16, color: colors.night, maxWidth: '90%' },
+  tileNameFrame: { width: '90%', minWidth: 0, overflow: 'hidden' },
+  tileName: { fontFamily: fonts.bold, fontSize: 16, color: colors.night, textAlign: 'center' },
   tileSub: { fontFamily: fonts.regular, fontSize: 12, color: colors.muted },
   tokenPill: { backgroundColor: colors.yellow, borderRadius: 10, borderWidth: 2, borderColor: colors.night, paddingHorizontal: 8 },
   tokenText: { fontFamily: fonts.bold, fontSize: 12, color: colors.night },

@@ -20,7 +20,7 @@ import { colors, fonts } from '../../theme';
  *  - acting:    whose move it is right now (thinking bubble)
  *  - 👁️ chip:   their Lie Deye token balance
  */
-export default function OpponentSeat({ player, seat, spotlight, muted, acting, role, compact = false, size: sizeProp }) {
+export default function OpponentSeat({ player, seat, spotlight, muted, acting, role, compact = false, size: sizeProp, width = 78 }) {
   const { t, textStyle } = useI18n();
   const playerName = player?.nickname ?? t('common.aPlayer');
   const size = sizeProp || (compact ? 46 : 54);
@@ -43,7 +43,7 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
   const connected = player?.connected !== false;
 
   return (
-    <View style={[styles.wrap, muted && styles.mutedWrap]} accessibilityLabel={muted ? t('seat.a11yMuted', { name: playerName }) : playerName}>
+    <View style={[styles.wrap, { width }, muted && styles.mutedWrap]} accessibilityLabel={muted ? t('seat.a11yMuted', { name: playerName }) : playerName}>
       <View style={{ width: size + 14, height: size + 14, alignItems: 'center', justifyContent: 'center' }}>
         {spotlight && (
           <Animated.View
@@ -86,9 +86,9 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
         </View>
       </View>
 
-      <Text style={[styles.name, spotlight && styles.nameSpot, textStyle]} numberOfLines={1}>
-        {playerName}
-      </Text>
+      <View style={styles.nameFrame}>
+        <Text style={[styles.name, spotlight && styles.nameSpot]} numberOfLines={1} ellipsizeMode="tail">{playerName}</Text>
+      </View>
       {!!role && (
         <View style={[styles.role, role === 'GIVER' ? styles.roleGiver : styles.roleAsker]}>
           <Text style={[styles.roleText, textStyle]}>{t(`role.${role}`)}</Text>
@@ -100,7 +100,7 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: 'center', width: 78 },
+  wrap: { alignItems: 'center', minWidth: 0 },
   mutedWrap: { opacity: 0.45 },
   ring: { position: 'absolute', borderWidth: 4, borderColor: colors.yellow, backgroundColor: 'rgba(255,210,63,0.25)' },
   mutedBadge: {
@@ -141,11 +141,12 @@ const styles = StyleSheet.create({
   },
   tokenChip: { backgroundColor: colors.yellow, paddingHorizontal: 3 },
   countText: { fontFamily: fonts.bold, fontSize: 11, color: colors.night },
-  name: { fontFamily: fonts.bold, fontSize: 13, color: colors.white, marginTop: 6, maxWidth: 78 },
+  nameFrame: { alignSelf: 'stretch', minWidth: 0, overflow: 'hidden', marginTop: 6 },
+  name: { fontFamily: fonts.bold, fontSize: 13, color: colors.white, textAlign: 'center' },
   nameSpot: { color: colors.yellow },
-  role: { marginTop: 2, borderRadius: 8, paddingHorizontal: 6, paddingVertical: 1, borderWidth: 2, borderColor: colors.night },
+  role: { maxWidth: '100%', marginTop: 2, borderRadius: 8, paddingHorizontal: 4, paddingVertical: 1, borderWidth: 2, borderColor: colors.night },
   roleGiver: { backgroundColor: colors.pink },
   roleAsker: { backgroundColor: colors.teal },
-  roleText: { fontFamily: fonts.bold, fontSize: 10, color: colors.white, letterSpacing: 0.5 },
+  roleText: { fontFamily: fonts.bold, fontSize: 10, color: colors.white, letterSpacing: 0.5, textAlign: 'center' },
   mutedText: { fontFamily: fonts.bold, fontSize: 10, color: colors.red, letterSpacing: 1, marginTop: 2 },
 });

@@ -3,13 +3,14 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import CartoonButton from '../common/CartoonButton';
+import OfferDecisionButtons from './OfferDecisionButtons';
 import TimerBar from './TimerBar';
 import TouchHeatmap, { ScreenMap, analyzeTouches, heatColor } from './TouchHeatmap';
 import LanguageToggle from '../LanguageToggle';
 import { useI18n } from '../../i18n';
 import { AUDIO_TOGGLE_SIZE } from '../AudioToggle';
-import { colors, fonts, gradients } from '../../theme';
+import { colors, fonts } from '../../theme';
+import { viewport, verticalScrollProps } from '../../theme/layout';
 
 const secs = (t, ms, digits = 1) => t('var.seconds', { seconds: (ms / 1000).toFixed(digits) });
 
@@ -105,7 +106,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
           <TimerBar deadline={game.deadline} duration={game.phaseDuration} clockOffset={clockOffset} frozen label={t('var.decide')} compact />
         </View>
 
-        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <ScrollView {...verticalScrollProps} contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <Animated.View entering={SlideInDown.springify().damping(16)} style={[styles.card, { width: contentW + 16 }]}>
             <View style={styles.tiles}>
               <StatTile
@@ -164,28 +165,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
             <Text style={[styles.warn, textStyle]}>{t('table.verifiedTransfer', { rank: game.requestedRank })}</Text>
           )}
           {forcedNext && <Text style={[styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>}
-          <View style={styles.decisionRow}>
-            <CartoonButton
-              title={t('action.reject')}
-              size="md"
-              gradient={gradients.danger}
-              lipColor={colors.darkRed}
-              icon={<Text style={styles.emoji}>✋</Text>}
-              disabled={busy}
-              onPress={() => onDecide(false)}
-              style={styles.flex}
-            />
-            <CartoonButton
-              title={t('action.take')}
-              size="md"
-              gradient={gradients.success}
-              lipColor={colors.darkGreen}
-              icon={<Text style={styles.emoji}>🤲</Text>}
-              disabled={busy}
-              onPress={() => onDecide(true)}
-              style={styles.flex}
-            />
-          </View>
+          <OfferDecisionButtons offerCount={data.offerNumber} onDecide={onDecide} busy={busy} />
         </View>
       </SafeAreaView>
     </Animated.View>
@@ -194,7 +174,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
 
 const styles = StyleSheet.create({
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(16,6,40,0.94)', zIndex: 80, elevation: 80 },
-  safe: { flex: 1 },
+  safe: viewport,
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 8 },
   iconBtn: {
     width: AUDIO_TOGGLE_SIZE,
@@ -263,6 +243,4 @@ const styles = StyleSheet.create({
   verdictText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.night, textAlign: 'center' },
   footer: { paddingHorizontal: 14, paddingBottom: 8, gap: 6 },
   warn: { fontFamily: fonts.bold, fontSize: 13, color: colors.pink, textAlign: 'center' },
-  decisionRow: { flexDirection: 'row', gap: 10 },
-  emoji: { fontSize: 20 },
 });

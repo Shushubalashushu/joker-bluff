@@ -13,7 +13,7 @@ import { colors, fonts, cartoonShadow } from '../../theme';
  * Exposes `shake()` via ref so the parent can nudge the user (e.g. empty name).
  */
 const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChangeNickname, onEditAvatar, inputRef, error }, ref) {
-  const { t, textStyle, alignStart } = useI18n();
+  const { t, isRTL, textStyle, alignStart } = useI18n();
   const shakeX = useSharedValue(0);
   const shakeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: shakeX.value }] }));
 
@@ -46,19 +46,22 @@ const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChan
         <View style={styles.fields}>
           <Text style={[styles.label, alignStart]}>{t('profile.nickname')}</Text>
           <View style={[styles.inputRow, error && styles.inputError]}>
-            <TextInput
-              ref={inputRef}
-              value={nickname}
-              onChangeText={onChangeNickname}
-              placeholder={t('profile.placeholder')}
-              placeholderTextColor={colors.muted}
-              maxLength={NICKNAME_MAX}
-              autoCorrect={false}
-              autoCapitalize="words"
-              returnKeyType="done"
-              style={[styles.input, alignStart]}
-              accessibilityLabel={t('profile.nickname')}
-            />
+            <View style={styles.inputFrame}>
+              <TextInput
+                ref={inputRef}
+                value={nickname}
+                onChangeText={onChangeNickname}
+                placeholder={t('profile.placeholder')}
+                placeholderTextColor={colors.muted}
+                maxLength={NICKNAME_MAX}
+                autoCorrect={false}
+                autoCapitalize="words"
+                multiline={false}
+                returnKeyType="done"
+                style={[styles.input, { textAlign: isRTL ? 'right' : 'left' }]}
+                accessibilityLabel={t('profile.nickname')}
+              />
+            </View>
             <Pressable
               onPress={() => onChangeNickname(randomNickname())}
               hitSlop={8}
@@ -81,6 +84,8 @@ export default ProfileCard;
 
 const styles = StyleSheet.create({
   card: {
+    width: '100%',
+    maxWidth: '100%',
     backgroundColor: colors.white,
     borderRadius: 28,
     borderWidth: 4,
@@ -118,7 +123,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  fields: { flex: 1 },
+  fields: { flex: 1, minWidth: 0 },
   label: { fontFamily: fonts.bold, color: colors.night, fontSize: 15, marginBottom: 6 },
   inputRow: {
     flexDirection: 'row',
@@ -129,10 +134,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingLeft: 12,
     height: 50,
+    maxWidth: '100%',
+    overflow: 'hidden',
   },
   inputError: { borderColor: colors.red },
-  input: { flex: 1, fontFamily: fonts.semibold, fontSize: 18, color: colors.night, paddingVertical: 0 },
-  dice: { paddingHorizontal: 10, height: '100%', justifyContent: 'center' },
+  inputFrame: { flex: 1, minWidth: 0, overflow: 'hidden' },
+  input: { width: '100%', minWidth: 0, fontFamily: fonts.semibold, fontSize: 18, color: colors.night, paddingVertical: 0 },
+  dice: { flexShrink: 0, paddingHorizontal: 10, height: '100%', justifyContent: 'center' },
   diceText: { fontSize: 22 },
   hint: { fontFamily: fonts.regular, color: colors.muted, fontSize: 12, marginTop: 6 },
 });

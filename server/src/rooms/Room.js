@@ -220,7 +220,7 @@ class Room {
         events = this.game.offerCard(playerId, payload.cardId, { touches: payload.touches, noCard: payload.noCard === true });
         break;
       case C2S.PLAYER_DECISION:
-        events = this.game.decide(playerId, payload.accept);
+        events = this.game.decide(playerId, payload.accept, payload.offerIndex);
         break;
       case C2S.USE_LIE_DEYE:
         events = this.game.useLieDeye(playerId);

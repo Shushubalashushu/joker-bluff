@@ -6,12 +6,13 @@ import Avatar from '../common/Avatar';
 import { AVATARS } from '../../constants/avatars';
 import { useI18n } from '../../i18n';
 import { colors, fonts, cartoonShadow } from '../../theme';
+import { viewport } from '../../theme/layout';
 
 export default function AvatarPickerModal({ visible, selectedId, onSelect, onClose }) {
   const { t, textStyle } = useI18n();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <SafeAreaProvider>
+      <SafeAreaProvider style={viewport}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <SafeAreaView edges={['top', 'bottom', 'left', 'right']} style={styles.safe} pointerEvents="box-none">
         <Animated.View entering={ZoomIn.springify().damping(14)} style={styles.sheet}>
@@ -46,8 +47,8 @@ export default function AvatarPickerModal({ visible, selectedId, onSelect, onClo
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 20 },
-  safe: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' },
+  backdrop: { ...viewport, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 20 },
+  safe: { ...viewport, alignItems: 'center', justifyContent: 'center' },
   sheet: {
     width: '100%',
     maxWidth: 380,

@@ -85,9 +85,9 @@ To play locally, open the app on **4+** devices or simulators (a match needs at 
 | Deck | `N` players → first `N` ranks of `A K Q J 10 9 8 7`, × 4 suits, + 1 Joker = `4N + 1` cards (4–8 players) |
 | Deal | One random player gets **5** cards (the *holder*), the others get 4. The deal is redone if anyone starts with a winning hand. |
 | Turn | The seat right after the holder is the *active* player. They `request_card` (name a rank). |
-| Offers | The holder `offer_card`s **any** card face-down. The active player can accept or reject offers #1 and #2 with `player_decision`. |
+| Offers | The holder `offer_card`s **any** card face-down. After the first rejection, the requester may take either of the first two face-down offers or reject the second to force a third. |
 | 3rd offer | After 2 rejections the holder has exactly 3 cards in hand. They choose one, and it is **auto-accepted** (there is no decision phase). |
-| After a transfer | Rejected cards go back to the giver. The receiver now has 5 cards and becomes the new holder; the seat after them becomes the new active player. |
+| After a transfer | Every unchosen card returns to the giver. The receiver now has 5 cards and becomes the new holder. The seat after them becomes the new active player. |
 | Win / loss | After a successful transfer, the giver wins automatically if passing their fifth card leaves exactly four cards of one rank. Rejected cards return before the win check. Whoever owns the Joker after the transfer loses. |
 | Timers | Request 15s · Offer 15s · Decision 10s (60s after a Lie Deye); **600s each while `DEV_TESTING_MODE` is on**. When time runs out the server makes the move: it asks for your most-held rank, offers a **completely random card** from the holder's hand (it may or may not be the requested rank), or accepts. A disconnected player's timer drops to 3s. |
 | Leave mid-match | The deck size depends on the player count, so the match is **terminated**. Everyone gets a `game_aborted` event and goes back to the room's waiting room (same code, same group). |
@@ -121,7 +121,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `start_game`, `play_again`, `end_game` | `{ lifecycleId }` (host only) |
 | `request_card` | `{ matchId, step, rank }` |
 | `offer_card` | `{ matchId, step, cardId, noCard?: boolean, touches?: [{ c, u, v, x, y, t }] }`. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), `t` the ms since OFFER started |
-| `player_decision` | `{ matchId, step, accept: boolean }` |
+| `player_decision` | `{ matchId, step, accept: boolean, offerIndex?: number }`. Use `offerIndex: 0` or `1` to take the first or second available offer. Omitting it accepts the latest offer. Rejecting the latest offer uses `accept: false` without an index. |
 | `use_lie_deye` | `{ matchId, step }` |
 | `shuffle_hand` | `{ matchId, order?: cardId[] }` → `{ order }`. The sender's new `game_state` is emitted before the ack. |
 | `update_profile` | `{ nickname?, avatarId? }` |

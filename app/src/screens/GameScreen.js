@@ -24,6 +24,10 @@ import { PHASES } from '../constants/events';
 import { TOUCH_TELEMETRY } from '../config';
 import { describeEvent } from '../utils/describeEvent';
 import { colors, fonts, gradients, cartoonShadow } from '../theme';
+import { viewport } from '../theme/layout';
+
+const TABLE_PADDING = 4;
+const TABLE_GAP = 2;
 
 /** Splits opponents (clockwise from my left) into left column / top row / right column. */
 function layoutSeats(seats, myId) {
@@ -229,7 +233,7 @@ export default function GameScreen() {
   }, [moveKey]);
 
   const onRequest = useCallback((rank) => run(() => requestCard(rank)), [run, requestCard]);
-  const onDecide = useCallback((accept) => run(() => decide(accept)), [run, decide]);
+  const onDecide = useCallback((accept, offerIndex) => run(() => decide(accept, offerIndex)), [run, decide]);
   const onLieDeye = useCallback(() => run(spendLieDeye), [run, spendLieDeye]);
   const onOffer = useCallback(
     async (cardId) => {
@@ -325,6 +329,9 @@ export default function GameScreen() {
   const myRole = isHolder ? 'GIVER' : playerId === game.activeId ? 'ASKER' : null;
   const newCardId = game.lastTransfer && game.lastTransfer.turn === game.turn - 1 ? game.lastTransfer.cardId : null;
   const seatSize = crowded ? Math.min(r.seatAvatar, 44) : r.seatAvatar;
+  const sideCount = Number(left.length > 0) + Number(right.length > 0);
+  const sideWidth = Math.min(78, Math.floor(r.availW / 5));
+  const tableWidth = r.availW - 2 * TABLE_PADDING - sideCount * (sideWidth + TABLE_GAP);
   const tight = r.compact || (crowded && r.tier !== 'tall');
 
   const timerLabel = finished
@@ -335,7 +342,7 @@ export default function GameScreen() {
     ? t('timer.offering', { name: nameOf(game.holderId) })
     : t('timer.deciding', { name: nameOf(game.activeId) });
 
-  const renderSeat = (seat) => {
+  const renderSeat = (seat, width = 78) => {
     const inTransaction = seat.id === game.holderId || seat.id === game.activeId;
     return (
       <OpponentSeat
@@ -347,7 +354,8 @@ export default function GameScreen() {
         acting={!finished && seat.id === game.actorId}
         role={finished ? null : seat.isHolder ? 'GIVER' : seat.isActive ? 'ASKER' : null}
         compact={crowded}
-        size={seatSize}
+        size={Math.min(seatSize, width - 22)}
+        width={width}
       />
     );
   };
@@ -397,22 +405,23 @@ export default function GameScreen() {
         </View>
 
         {/* Opponents (top) */}
-        <View style={[styles.topRow, { marginTop: tight ? 6 : 12, gap: r.gap }]}>{top.map(renderSeat)}</View>
+        <View style={[styles.topRow, { marginTop: tight ? 6 : 12, gap: r.gap }]}>{top.map((seat) => renderSeat(seat))}</View>
 
         {/* Opponents (sides) + table */}
         <View style={styles.middle}>
-          <View style={[styles.sideCol, { gap: r.gap }]}>{left.map(renderSeat)}</View>
+          {!!left.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{left.map((seat) => renderSeat(seat, sideWidth))}</View>}
           <View style={styles.tableWrap}>
             <TableArea
               game={game}
               nameOf={nameOf}
               myId={playerId}
               cardSize={r.tableCard}
+              width={tableWidth}
               concealed={concealed}
               compact={tight}
             />
           </View>
-          <View style={[styles.sideCol, { gap: r.gap }]}>{right.map(renderSeat)}</View>
+          {!!right.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{right.map((seat) => renderSeat(seat, sideWidth))}</View>}
         </View>
 
         <View pointerEvents="box-none" style={[styles.bottom, { gap: tight ? 4 : 8 }]}>
@@ -522,8 +531,8 @@ export default function GameScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  safe: { flex: 1 },
+  root: viewport,
+  safe: viewport,
   loading: { alignItems: 'center', justifyContent: 'center' },
   loadingText: { fontFamily: fonts.bold, fontSize: 26, color: colors.white },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingHorizontal: 14, paddingTop: 4 },
@@ -564,13 +573,13 @@ const styles = StyleSheet.create({
   timer: { paddingHorizontal: 14 },
   toastAnchor: { height: 0, zIndex: 60, marginTop: 6 },
   topRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', paddingHorizontal: 8 },
-  middle: { flex: 1, minHeight: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4, gap: 2 },
-  sideCol: { justifyContent: 'center' },
-  tableWrap: { flex: 1, justifyContent: 'center' },
+  middle: { flex: 1, minHeight: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: TABLE_PADDING, gap: TABLE_GAP },
+  sideCol: { flexShrink: 0, justifyContent: 'center' },
+  tableWrap: { flex: 1, minWidth: 0, justifyContent: 'center' },
   bottom: {},
   handArea: { position: 'relative', paddingHorizontal: 12 },
   meRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, paddingHorizontal: 4 },
-  meInfo: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },
+  meInfo: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, minWidth: 0 },
   meName: { fontFamily: fonts.bold, color: colors.white, fontSize: 14 },
   meRole: { borderRadius: 8, borderWidth: 2, borderColor: colors.night, paddingHorizontal: 6, paddingVertical: 1 },
   meMuted: {

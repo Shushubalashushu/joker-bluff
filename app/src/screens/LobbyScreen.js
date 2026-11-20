@@ -23,6 +23,7 @@ import useKeyboardLift from '../hooks/useKeyboardLift';
 import LanguageToggle from '../components/LanguageToggle';
 import { useI18n } from '../i18n';
 import { colors, fonts, gradients } from '../theme';
+import { viewport, verticalScrollProps } from '../theme/layout';
 
 function Logo({ scale = 1 }) {
   const { t, textStyle } = useI18n();
@@ -87,8 +88,7 @@ export default function LobbyScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             automaticallyAdjustKeyboardInsets={false}
-            bounces={false}
-            overScrollMode="never"
+            {...verticalScrollProps}
             showsVerticalScrollIndicator={false}
           >
             <Animated.View entering={FadeInDown.delay(50).springify()}>
@@ -149,9 +149,9 @@ export default function LobbyScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1 },
-  safe: { flex: 1 },
-  fill: { flex: 1 },
+  root: viewport,
+  safe: viewport,
+  fill: viewport,
   langToggle: { position: 'absolute', left: 14, zIndex: 100, elevation: 100 },
   // paddingTop 56: the persistent audio toggle (48px) sits in the top-right corner
   content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24, gap: 28 },

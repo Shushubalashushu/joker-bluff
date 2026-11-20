@@ -151,7 +151,7 @@ export function GameProvider({ children }) {
       emitAck(C2S.OFFER_CARD, { matchId, step, cardId, touches, noCard }),
     [matchId, step]
   );
-  const decide = useCallback((accept) => emitAck(C2S.PLAYER_DECISION, { matchId, step, accept }), [matchId, step]);
+  const decide = useCallback((accept, offerIndex) => emitAck(C2S.PLAYER_DECISION, { matchId, step, accept, offerIndex }), [matchId, step]);
   // Not called `useLieDeye` on purpose: the `use` prefix is reserved for React hooks.
   const spendLieDeye = useCallback(() => emitAck(C2S.USE_LIE_DEYE, { matchId, step }), [matchId, step]);
   // `order` (optional) = client-proposed permutation of hand card ids; the server

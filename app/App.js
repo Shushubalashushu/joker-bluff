@@ -16,6 +16,7 @@ import GameScreen from './src/screens/GameScreen';
 import AudioToggle from './src/components/AudioToggle';
 import ConnectionBanner from './src/components/ConnectionBanner';
 import { colors } from './src/theme';
+import { viewport } from './src/theme/layout';
 
 /**
  * Navigation is driven by SERVER state, not by taps:
@@ -51,7 +52,7 @@ export default function App() {
 
   return (
     <GestureHandlerRootView style={[styles.fill, styles.layout]}>
-      <SafeAreaProvider>
+      <SafeAreaProvider style={viewport}>
         <LanguageProvider>
           <ProfileProvider>
             <AudioProvider>
@@ -71,7 +72,7 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  fill: { flex: 1 },
+  fill: viewport,
   layout: { direction: 'ltr' },
   splash: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.purple },
 });

@@ -4,6 +4,7 @@ import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 import CartoonButton from '../common/CartoonButton';
 import { PHASES } from '../../constants/events';
 import { useI18n } from '../../i18n';
+import OfferDecisionButtons from './OfferDecisionButtons';
 import { rich } from '../../i18n/rich';
 import { colors, fonts, gradients } from '../../theme';
 
@@ -205,7 +206,7 @@ export default function ActionPanel({
             </Text>
           </View>
         ) : (
-          !compact && (
+          (!compact || offerNumber === 2) && (
             <Text style={[styles.sub, offerNumber === 2 && styles.warn, textStyle]}>
               {offerNumber === 2 ? t('action.rejectWarn') : t('action.bluffQ')}
             </Text>
@@ -215,28 +216,7 @@ export default function ActionPanel({
           <Text style={[styles.sub, styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>
         )}
         <LieDeyeBar game={game} busy={busy} onUse={onLieDeye} onOpen={onOpenLieDeye} />
-        <View style={styles.decisionRow}>
-          <CartoonButton
-            title={t('action.reject')}
-            size={compact ? 'sm' : 'md'}
-            gradient={gradients.danger}
-            lipColor={colors.darkRed}
-            icon={<Text style={styles.emoji}>✋</Text>}
-            disabled={busy || !pendingOffer}
-            onPress={() => onDecide(false)}
-            style={styles.flex}
-          />
-          <CartoonButton
-            title={t('action.take')}
-            size={compact ? 'sm' : 'md'}
-            gradient={gradients.success}
-            lipColor={colors.darkGreen}
-            icon={<Text style={styles.emoji}>🤲</Text>}
-            disabled={busy || !pendingOffer}
-            onPress={() => onDecide(true)}
-            style={styles.flex}
-          />
-        </View>
+        <OfferDecisionButtons offerCount={offerNumber} onDecide={onDecide} busy={busy || !pendingOffer} compact={compact} />
       </>
     );
   } else if (isActive || isHolder) {
@@ -310,11 +290,9 @@ const styles = StyleSheet.create({
   rankChipCompact: { minWidth: 44, height: 44 },
   rankChipPressed: { transform: [{ translateY: 3 }], shadowOpacity: 0 },
   rankText: { fontFamily: fonts.bold, fontSize: 22, color: colors.night },
-  decisionRow: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
   offerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'stretch' },
   flex: { flex: 1 },
   wide: { alignSelf: 'stretch' },
-  emoji: { fontSize: 20 },
   waiting: { fontFamily: fonts.semibold, fontSize: 16, color: colors.night, textAlign: 'center' },
   isolatedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   isolatedIcon: { fontSize: 22 },

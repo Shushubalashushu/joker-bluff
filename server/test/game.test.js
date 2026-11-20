@@ -216,6 +216,55 @@ test('auto-win: rejected cards come back first - a returned quad card still comp
   assert.equal(g.result.winnerId, h);
 });
 
+test('second decision: taking the first card returns the pending second card before checking for a win', () => {
+  const g = newGame(4, 33);
+  const { pid: holder, R: rank } = rigHolderQuads(g);
+  const asker = g.activeId;
+  const hand = g.hands.get(holder);
+  const first = hand.find((c) => c.rank !== rank);
+  const second = hand.find((c) => c.rank === rank);
+  g.requestCard(asker, rank);
+  g.offerCard(holder, first.id);
+  assert.throws(() => g.decide(asker, true, 1), { code: 'BAD_DECISION' });
+  g.decide(asker, false);
+  g.offerCard(holder, second.id);
+
+  for (const index of [-1, 2, 0.5, '0', null]) {
+    assert.throws(() => g.decide(asker, true, index), { code: 'BAD_DECISION' });
+  }
+  assert.throws(() => g.decide(asker, false, 0), { code: 'BAD_DECISION' });
+  assert.equal(g.phase, 'DECISION');
+  assert.deepEqual(g.getStateFor(asker).offers.map(({ card }) => card), [null, null]);
+
+  const [transfer, win] = g.decide(asker, true, 0);
+  assert.equal(transfer.offerNumber, 1);
+  assert.equal(g.lastTransfer.cardId, first.id);
+  assert.ok(g.hands.get(asker).includes(first));
+  assert.ok(hand.includes(second));
+  assert.equal(win.winnerId, holder);
+  assert.deepEqual(hand.map((card) => card.rank), [rank, rank, rank, rank]);
+});
+
+test('second decision: taking the second card returns the first without awarding a four-card win', () => {
+  const g = newGame(4, 34);
+  const { pid: holder, R: rank } = rigHolderQuads(g);
+  const asker = g.activeId;
+  const hand = g.hands.get(holder);
+  const first = hand.find((c) => c.rank !== rank);
+  const second = hand.find((c) => c.rank === rank);
+  g.requestCard(asker, rank);
+  g.offerCard(holder, first.id);
+  g.decide(asker, false);
+  g.offerCard(holder, second.id);
+
+  const [transfer] = g.decide(asker, true, 1);
+  assert.equal(transfer.offerNumber, 2);
+  assert.ok(g.hands.get(asker).includes(second));
+  assert.ok(hand.includes(first));
+  assert.equal(hand.length, 4);
+  assert.equal(g.result, null);
+});
+
 test('auto-win: a forced third transfer of the Joker wins only after both rejected cards return', () => {
   const g = newGame(4, 31);
   const { pid: holder, R: rank } = rigHolderQuads(g);

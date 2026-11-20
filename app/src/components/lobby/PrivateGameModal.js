@@ -8,6 +8,7 @@ import useKeyboardLift from '../../hooks/useKeyboardLift';
 import { ROOM_CODE_LENGTH } from '../../config';
 import { useI18n } from '../../i18n';
 import { colors, fonts, gradients, cartoonShadow } from '../../theme';
+import { viewport } from '../../theme/layout';
 
 /**
  * Private Game flow:
@@ -23,7 +24,7 @@ export default function PrivateGameModal({ visible, onClose, onJoin, onCreate })
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
-      <SafeAreaProvider>
+      <SafeAreaProvider style={viewport}>
         <PrivateGameSheet visible={visible} onClose={dismiss} onJoin={onJoin} onCreate={onCreate} />
       </SafeAreaProvider>
     </Modal>
@@ -127,7 +128,7 @@ function PrivateGameSheet({ visible, onClose, onJoin, onCreate }) {
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
+  backdrop: { ...viewport, backgroundColor: colors.overlay, justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: colors.cream,
     borderTopLeftRadius: 32,

@@ -188,22 +188,26 @@ class JokerBluffGame {
     ];
     if (forced) {
       // CRITICAL RULE: the receiving player MUST take the 3rd card.
-      events.push(...this._transfer(true));
+      events.push(...this._transfer(offerNumber - 1, true));
     } else {
       this._enterPhase(PHASES.DECISION);
     }
     return events;
   }
 
-  /** Event `player_decision`: active player accepts or rejects offer #1 / #2. */
-  decide(playerId, accept) {
+  /** The requester may take either card during the second decision or reject the latest offer. */
+  decide(playerId, accept, offerIndex) {
     this._assertPhase(PHASES.DECISION);
     this._assertActor(playerId, this.activeId);
     if (typeof accept !== 'boolean') throw new GameError('BAD_DECISION', '`accept` must be a boolean');
 
-    if (accept) return this._transfer(false);
+    const latestIndex = this.offers.length - 1;
+    if (offerIndex !== undefined && (!accept || !Number.isInteger(offerIndex) || offerIndex < 0 || offerIndex > latestIndex)) {
+      throw new GameError('BAD_DECISION', 'Select an available offer to accept');
+    }
+    if (accept) return this._transfer(offerIndex ?? latestIndex, false);
 
-    const offer = this.offers[this.offers.length - 1];
+    const offer = this.offers[latestIndex];
     offer.status = 'rejected'; // stays face-down on the table until the transaction ends
     this._enterPhase(PHASES.OFFER);
     return [
@@ -441,19 +445,18 @@ class JokerBluffGame {
 
   // ---------------------------------------------------------------- internals
 
-  _transfer(forced) {
+  _transfer(offerIndex, forced) {
     const fromId = this.holderId;
     const toId = this.activeId;
-    const offerNumber = this.offers.length;
-    const accepted = this.offers[offerNumber - 1];
+    const offerNumber = offerIndex + 1;
+    const accepted = this.offers[offerIndex];
     const verifiedRank = accepted.verifiedNoCard ? this.requestedRank : null;
     const giverHand = this.hands.get(fromId);
-    const passedFifthCard = giverHand.length + offerNumber === 5;
-    accepted.status = 'accepted';
+    const passedFifthCard = giverHand.length + this.offers.length === 5;
 
     this.hands.get(toId).push(accepted.card);
-    // Rejected face-down cards go back into the giver's hand.
-    for (const o of this.offers) if (o.status === 'rejected') giverHand.push(o.card);
+    // Every unchosen offer returns, including the pending second card if the first was taken.
+    for (const offer of this.offers) if (offer !== accepted) giverHand.push(offer.card);
 
     this.lastTransfer = {
       fromId,

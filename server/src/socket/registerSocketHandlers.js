@@ -191,6 +191,9 @@ function registerSocketHandlers(io, { sessions, rooms }) {
         const room = currentRoom(p.matchId ?? null);
         room.assertStep(p.step);
         if (event === C2S.OFFER_CARD) validateOffer(p);
+        if (event === C2S.PLAYER_DECISION && p.offerIndex !== undefined && !Number.isInteger(p.offerIndex)) {
+          throw new GameError('BAD_DECISION', 'Offer index must be an integer');
+        }
         room.act(session.playerId, event, p);
       });
     }
