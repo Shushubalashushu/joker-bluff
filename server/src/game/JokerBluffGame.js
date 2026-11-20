@@ -3,7 +3,7 @@
 const { randomInt } = require('node:crypto');
 const { PHASES } = require('../shared/events');
 const { buildDeck, shuffle, isJoker, findWinningRank, JOKER } = require('./deck');
-const { sanitizeTouches } = require('./telemetry');
+const { sanitizeTouches, sanitizePressDuration } = require('./telemetry');
 const config = require('../config');
 
 const DEFAULT_TIMERS = config.TIMERS;
@@ -75,7 +75,7 @@ class JokerBluffGame {
      * Face-down cards on the table, plus the giver telemetry captured when each was offered.
      * @type {{card: object, status: 'pending'|'rejected'|'accepted', decisionMs: number, phaseLimitMs: number,
      *         handSize: number, offeredSlot: number, touches: object[], shuffles: number, auto: boolean,
-     *         lieDeyeUsed: boolean}[]}
+     *         pressDurationMs: number|null, claimedNoCard: boolean, lieDeyeUsed: boolean}[]}
      */
     this.offers = [];
     this.offerPhaseShuffles = 0; // how often the holder shuffled while choosing the current offer
@@ -139,10 +139,7 @@ class JokerBluffGame {
    * `opts.touches` is the giver's touch trail while choosing (see telemetry.js).
    * Decision time is measured by the SERVER (phase start -> offer received).
    *
-   * `opts.noCard` = "I don't have it" (System Verified Forced Bluff). The server
-   * checks that the holder owns NO card of the requested rank (hand + their own
-   * face-down cards already on the table). If the claim is true the offer is
-   * stamped `verifiedNoCard` for everyone; if it's false the offer is refused.
+   * `opts.claimedNoCard` is an optional statement by the giver about the requested rank.
    */
   offerCard(playerId, cardId, opts = {}) {
     this._assertPhase(PHASES.OFFER);
@@ -150,10 +147,7 @@ class JokerBluffGame {
     const hand = this.hands.get(playerId);
     const idx = hand.findIndex((c) => c.id === cardId);
     if (idx === -1) throw new GameError('BAD_CARD', 'That card is not in your hand');
-    const verifiedNoCard = opts.noCard === true;
-    if (verifiedNoCard && !this._lacksRequestedRank(playerId)) {
-      throw new GameError('HAS_RANK', `You do have a ${this.requestedRank} - the system can't verify that claim`);
-    }
+    const claimedNoCard = opts.claimedNoCard === true;
 
     const handSize = hand.length;
     const slotOf = new Map(hand.map((c, i) => [c.id, i])); // final order at offer time
@@ -167,10 +161,11 @@ class JokerBluffGame {
       handSize,
       offeredSlot: idx,
       touches: opts.auto ? [] : sanitizeTouches(opts.touches, { handSize, maxT: decisionMs + 2000, slotOf }),
+      pressDurationMs: opts.auto ? null : sanitizePressDuration(opts.pressDurationMs, decisionMs),
       shuffles: this.offerPhaseShuffles,
       auto: !!opts.auto,
       lieDeyeUsed: false,
-      verifiedNoCard,
+      claimedNoCard,
     });
     const offerNumber = this.offers.length;
     const forced = offerNumber === MAX_OFFERS;
@@ -182,8 +177,8 @@ class JokerBluffGame {
         targetId: this.activeId,
         offerNumber,
         forced,
-        verifiedNoCard,
-        rank: verifiedNoCard ? this.requestedRank : undefined,
+        claimedNoCard,
+        rank: claimedNoCard ? this.requestedRank : undefined,
       },
     ];
     if (forced) {
@@ -384,8 +379,7 @@ class JokerBluffGame {
         status: o.status,
         forced: i + 1 === MAX_OFFERS,
         lieDeyeUsed: o.lieDeyeUsed,
-        // Public: the holder proved (server-checked) they own no card of the requested rank.
-        verifiedNoCard: !!o.verifiedNoCard,
+        claimedNoCard: o.claimedNoCard,
         card: isHolder || finished ? { ...o.card } : null,
       })),
       maxOffers: MAX_OFFERS,
@@ -417,12 +411,10 @@ class JokerBluffGame {
               shuffles: pending.shuffles,
               auto: pending.auto,
               touches: pending.touches.map((t) => ({ ...t })),
+              pressDurationMs: pending.pressDurationMs,
             }
           : null,
       isolated: !finished && !inTransaction, // client dims the screen for inactive players
-      // "I don't have it" (System Verified Forced Bluff): only the holder, only while
-      // choosing an offer, only when the server confirms they own no card of that rank.
-      canClaimNoCard: !!(isHolder && this.phase === PHASES.OFFER && this._lacksRequestedRank(viewerId)),
       deadline: this.deadline,
       phaseDuration: this.phaseDuration,
       phaseStartedAt: this.phaseStartedAt,
@@ -450,7 +442,7 @@ class JokerBluffGame {
     const toId = this.activeId;
     const offerNumber = offerIndex + 1;
     const accepted = this.offers[offerIndex];
-    const verifiedRank = accepted.verifiedNoCard ? this.requestedRank : null;
+    const claimedRank = accepted.claimedNoCard ? this.requestedRank : null;
     const giverHand = this.hands.get(fromId);
     const passedFifthCard = giverHand.length + this.offers.length === 5;
 
@@ -465,8 +457,8 @@ class JokerBluffGame {
       forced,
       cardId: accepted.card.id,
       turn: this.turn,
-      verifiedNoCard: !!accepted.verifiedNoCard,
-      verifiedRank,
+      claimedNoCard: accepted.claimedNoCard,
+      claimedRank,
     };
     this.offers = [];
     this.requestedRank = null;
@@ -483,8 +475,8 @@ class JokerBluffGame {
         toId,
         offerNumber,
         forced,
-        verifiedNoCard: !!accepted.verifiedNoCard,
-        verifiedRank,
+        claimedNoCard: accepted.claimedNoCard,
+        claimedRank,
         nextHolderId: this.holderId,
         nextActiveId: this.activeId,
       },
@@ -512,12 +504,6 @@ class JokerBluffGame {
     this.phaseStartedAt = null;
     this.result = { winnerId: giverId, loserId, winningRank, auto: true };
     return { type: 'game_over', winnerId: giverId, loserId, winningRank, auto: true };
-  }
-
-  /** True when the holder owns NO card of the requested rank (hand + own face-down table cards). */
-  _lacksRequestedRank(playerId) {
-    if (!this.requestedRank) return false;
-    return !this._ownedCards(playerId).some((c) => c.rank === this.requestedRank);
   }
 
   _enterPhase(phase) {

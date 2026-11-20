@@ -27,6 +27,12 @@ function num(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
 
+/** Client-reported hold duration, bounded by the server-measured offer window. */
+function sanitizePressDuration(value, decisionMs) {
+  const duration = num(value, 0, decisionMs);
+  return duration === null ? null : Math.round(duration);
+}
+
 function downsample(arr, max) {
   if (arr.length <= max) return arr;
   const out = [];
@@ -63,4 +69,4 @@ function sanitizeTouches(raw, { handSize, maxT, slotOf = new Map() }) {
   return downsample(out, MAX_KEPT_SAMPLES);
 }
 
-module.exports = { sanitizeTouches, MAX_INPUT_SAMPLES, MAX_KEPT_SAMPLES };
+module.exports = { sanitizeTouches, sanitizePressDuration, MAX_INPUT_SAMPLES, MAX_KEPT_SAMPLES };

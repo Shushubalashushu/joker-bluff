@@ -216,8 +216,11 @@ class Room {
         events = this.game.requestCard(playerId, payload.rank);
         break;
       case C2S.OFFER_CARD:
-        // `noCard: true` = "I don't have it" (validated by the engine, never trusted).
-        events = this.game.offerCard(playerId, payload.cardId, { touches: payload.touches, noCard: payload.noCard === true });
+        events = this.game.offerCard(playerId, payload.cardId, {
+          touches: payload.touches,
+          pressDurationMs: payload.pressDurationMs,
+          claimedNoCard: payload.claimedNoCard,
+        });
         break;
       case C2S.PLAYER_DECISION:
         events = this.game.decide(playerId, payload.accept, payload.offerIndex);

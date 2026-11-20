@@ -13,36 +13,16 @@ const FELT_PADDING = 6;
 const INNER_BORDER = 2;
 const INNER_PADDING = 8;
 
-/**
- * 🔵✔ "System Verified Forced Bluff" stamp. The server confirmed the giver owns
- * NO card of the requested rank, so this face-down card is a bluff by necessity.
- * Purely informational - the card's face is still hidden.
- */
-function VerifiedStamp({ rank, cardSize }) {
-  const { t, textStyle } = useI18n();
-  const small = cardSize !== 'md';
+function ClaimBadge() {
+  const { t } = useI18n();
   return (
-    <Animated.View
-      entering={ZoomIn.springify().damping(10)}
-      style={[styles.verified, small && styles.verifiedSmall]}
-      accessible
-      accessibilityLabel={t('table.a11yVerified', { rank })}
-      pointerEvents="none"
-    >
-      <View style={styles.verifiedCheck}>
-        <Text style={styles.verifiedCheckText}>✔</Text>
-      </View>
-      <Text style={[styles.verifiedTitle, small && { fontSize: 8 }, textStyle]} numberOfLines={1}>
-        {t('table.verified')}
-      </Text>
-      <Text style={[styles.verifiedRank, small && { fontSize: 8 }, textStyle]} numberOfLines={1}>
-        {t('table.verifiedNo', { rank })}
-      </Text>
-    </Animated.View>
+    <View style={styles.claimBadge} accessible accessibilityLabel={t('nocard.claim')} pointerEvents="none">
+      <Text style={styles.claimIcon}>💬</Text>
+    </View>
   );
 }
 
-function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, requestedRank, available }) {
+function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, available }) {
   const { t, textStyle } = useI18n();
   const s = CARD_SIZES[cardSize] || CARD_SIZES.md;
   if (!offer) {
@@ -63,7 +43,7 @@ function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, requestedRan
       <Animated.View entering={ZoomIn.springify().damping(12)} style={rejected && styles.rejectedCard}>
         {/* Holder sees their own face-down cards (unless Anti-spy is on); everyone else gets null from the server */}
         <PlayingCard card={showFace ? offer.card : null} size={cardSize} highlighted={available || offer.status === 'pending'} />
-        {offer.verifiedNoCard && <VerifiedStamp rank={requestedRank} cardSize={cardSize} />}
+        {offer.claimedNoCard && <ClaimBadge />}
         {rejected && (
           <View style={styles.stamp}>
             <Text style={styles.stampText}>✗</Text>
@@ -97,7 +77,7 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
   const cardWidth = (width - 2 * (FELT_BORDER + FELT_PADDING + INNER_BORDER + INNER_PADDING + slotGap)) / game.maxOffers;
   const fittedSize = [cardSize, 'sm', 'xs'].find((size) => CARD_SIZES[size].w <= cardWidth) ?? 'xs';
   const transfer = game.lastTransfer;
-  const showVerifiedTransfer = game.phase === PHASES.REQUEST && transfer?.forced && transfer.verifiedNoCard;
+  const showClaimTransfer = game.phase === PHASES.REQUEST && transfer?.forced && transfer.claimedNoCard;
 
   return (
     <LinearGradient colors={gradients.felt} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.felt}>
@@ -119,10 +99,10 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
               {rich(t('table.gotAny'), { rank: <Text style={styles.bubbleRank}>{game.requestedRank}</Text> })}
             </Text>
           </Animated.View>
-        ) : showVerifiedTransfer ? (
-          <View style={[styles.bubble, styles.verifiedBubble]}>
-            <Text style={[styles.bubbleText, styles.verifiedBubbleText, compact && { fontSize: 12 }, textStyle]}>
-              {t('table.verifiedTransfer', { rank: transfer.verifiedRank })}
+        ) : showClaimTransfer ? (
+          <View style={[styles.bubble, styles.claimBubble]}>
+            <Text style={[styles.bubbleText, styles.claimBubbleText, compact && { fontSize: 12 }, textStyle]}>
+              {t('nocard.claim')}
             </Text>
           </View>
         ) : (
@@ -147,7 +127,6 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
               showFace={isHolderView && !concealed}
               cardSize={fittedSize}
               available={choosing && n <= 2}
-              requestedRank={game.requestedRank}
             />
           ))}
         </View>
@@ -192,8 +171,8 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   bubbleText: { fontFamily: fonts.semibold, fontSize: 16, color: colors.night },
-  verifiedBubble: { backgroundColor: colors.darkBlue, borderColor: colors.white },
-  verifiedBubbleText: { color: colors.white },
+  claimBubble: { backgroundColor: colors.darkBlue, borderColor: colors.white },
+  claimBubbleText: { color: colors.white },
   bubbleRank: { fontFamily: fonts.bold, color: colors.pink, fontSize: 20 },
   bubbleIdle: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'transparent' },
   bubbleIdleText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.white },
@@ -238,39 +217,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   eyeText: { fontSize: 12 },
-  // System Verified Forced Bluff stamp (sits across the middle of the face-down card)
-  verified: {
+  claimBadge: {
     position: 'absolute',
-    left: -4,
-    right: -4,
-    top: '30%',
-    alignItems: 'center',
-    paddingVertical: 3,
-    borderRadius: 8,
+    top: -8,
+    left: -5,
+    width: 23,
+    height: 23,
+    borderRadius: 12,
+    backgroundColor: colors.cream,
     borderWidth: 2,
-    borderColor: colors.white,
-    backgroundColor: colors.blue,
-    transform: [{ rotate: '-8deg' }],
-    shadowColor: colors.night,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.5,
-    shadowRadius: 0,
-    elevation: 4,
-  },
-  verifiedSmall: { paddingVertical: 1, borderRadius: 6 },
-  verifiedCheck: {
-    position: 'absolute',
-    top: -11,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: colors.white,
-    borderWidth: 2,
-    borderColor: colors.blue,
+    borderColor: colors.purple,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  verifiedCheckText: { color: colors.blue, fontFamily: fonts.bold, fontSize: 11, marginTop: -1 },
-  verifiedTitle: { marginTop: 6, fontFamily: fonts.bold, fontSize: 9, letterSpacing: 0.5, color: colors.white },
-  verifiedRank: { fontFamily: fonts.bold, fontSize: 10, color: colors.yellow },
+  claimIcon: { fontSize: 12 },
 });

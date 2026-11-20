@@ -98,7 +98,7 @@ To play locally, open the app on **4+** devices or simulators (a match needs at 
 | | |
 |---|---|
 | Use | During **DECISION**, the active player spends 1 token on the face-down card in front of them. |
-| Effect | The decision clock starts a fresh Lie Deye window (60 seconds in standard mode, 600 seconds in developer mode by default). A VAR overlay shows server-measured decision time, client-reported touches, shuffles, the chosen slot, and a replayable touch heatmap. |
+| Effect | The decision clock starts a fresh Lie Deye window (60 seconds in standard mode, 600 seconds in developer mode by default). The VAR overlay shows server-measured decision time, the chosen card's last hold duration, client-reported touches, shuffles, the chosen slot, and a replayable touch heatmap. |
 | Privacy | Only the asking player ever receives the telemetry, and only after spending a token on that offer. Everyone else just sees a 👁️ badge and a toast. Touches are sent keyed by card id. The server converts them to slot positions at offer time, so the heatmap still lines up if the giver shuffled, and card ids are never sent back. |
 | Economy | **4 tokens** for your first game in a room. **Unused tokens carry over** to later games in that room. The **winner gets +1**. You can use at most **3 per game**, however many you have. The room tracks balances on the server (leaving and rejoining doesn't reset them). |
 | Aborted matches | Tokens spent in a match that gets aborted stay spent. |
@@ -106,7 +106,7 @@ To play locally, open the app on **4+** devices or simulators (a match needs at 
 ### Hand tools
 - **Anti-spy (👁️ Hide):** flips every card in *your* hand face-down so people nearby can't peek. Only an inner card layer rotates (Y-axis flip), so the cards keep exactly the same positions and order. Your own offered cards on the table are hidden too.
 - **Shuffle:** works at any time during a match, even when it isn't your turn and even after the timer runs out. The app picks a new order, **shows it right away** with a little hop animation, and sends it to the server. The server checks that it's an exact permutation of your hand and stores it (if it isn't, the server shuffles randomly instead), so Lie Deye slot positions always match what the giver actually saw.
-- **System Verified Forced Bluff:** when the server checks that the giver owns none of the requested rank, the giver may arm **I don't have it** and select any card to offer face-down. Rejected cards still on the table count as owned. The requester sees a verified stamp, including when the third offer transfers immediately. Offers one and two remain optional for the requester.
+- **I don't have it:** the giver may attach this player claim to any face-down offer. The claim can be honest or a bluff. The requester sees a speech badge, including when the third offer transfers immediately.
 
 ## Socket protocol
 
@@ -120,7 +120,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `leave_room` | `{ code }` |
 | `start_game`, `play_again`, `end_game` | `{ lifecycleId }` (host only) |
 | `request_card` | `{ matchId, step, rank }` |
-| `offer_card` | `{ matchId, step, cardId, noCard?: boolean, touches?: [{ c, u, v, x, y, t }] }`. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), `t` the ms since OFFER started |
+| `offer_card` | `{ matchId, step, cardId, claimedNoCard?: boolean, pressDurationMs?: number, touches?: [{ c, u, v, x, y, t }] }`. The hold duration applies to the chosen card. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), and `t` the ms since OFFER started. |
 | `player_decision` | `{ matchId, step, accept: boolean, offerIndex?: number }`. Use `offerIndex: 0` or `1` to take the first or second available offer. Omitting it accepts the latest offer. Rejecting the latest offer uses `accept: false` without an index. |
 | `use_lie_deye` | `{ matchId, step }` |
 | `shuffle_hand` | `{ matchId, order?: cardId[] }` → `{ order }`. The sender's new `game_state` is emitted before the ack. |
@@ -131,14 +131,14 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 |---|---|
 | `session` | `{ token, playerId }`. The client stores `token` and sends it back in `auth` on reconnect to get its seat back. |
 | `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null` |
-| `game_state` | **This player's own redacted view**: their own hand, opponents' card *counts* and tokens, face-down offers (`card: null` unless you are the holder), Lie Deye state, the giver's `canClaimNoCard`, and verification on offers and `lastTransfer`. |
-| `game_event` | Public events for toasts and animations. Verified `card_transferred` events carry `verifiedNoCard` and `verifiedRank`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
+| `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
+| `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
 
 ## Server authority and safety checks
 
 - The server ties each action to the active socket for a guest session and checks room membership, host permissions, turn ownership, phase, and deadline. It checks destination admission before leaving the current room.
 - The server deals the deck and owns all transfers and token balances. Card IDs are opaque. Players receive their own hand and permitted public information. A client shuffle can reorder only the cards in its own current hand.
-- The server validates handshake and event payloads, bounds payload size and guest sessions, and rate-limits socket events, connections, and room-code attempts. Touch telemetry is client-reported and capped at 200 retained samples. Bluff verification uses the server's card ownership records.
+- The server validates handshake and event payloads, bounds payload size and guest sessions, and rate-limits socket events, connections, and room-code attempts. Touch telemetry is client-reported and capped at 200 retained samples. Hold duration is also client-reported and bounded by the server-measured offer window.
 
 ## UI notes
 

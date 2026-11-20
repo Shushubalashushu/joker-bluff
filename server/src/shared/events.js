@@ -16,7 +16,7 @@ const C2S = Object.freeze({
   END_GAME: 'end_game', // host only: terminate the match, everyone back to the lobby
   // Core game loop
   REQUEST_CARD: 'request_card',
-  OFFER_CARD: 'offer_card', // { cardId, touches?: [{c,u,v,x,y,t}], noCard?: true }  (noCard = "I don't have it", server-verified)
+  OFFER_CARD: 'offer_card', // { cardId, touches?, pressDurationMs?, claimedNoCard? }
   PLAYER_DECISION: 'player_decision',
   USE_LIE_DEYE: 'use_lie_deye',
   SHUFFLE_HAND: 'shuffle_hand', // reorder my own hand (any time)

@@ -123,14 +123,16 @@ async function scenario(url, clients) {
 
   const owned = holder.game.hand;
   const original = owned.map((c) => c.id);
-  assert.equal((await holder.emit('offer_card', { cardId: original[0], noCard: true })).code, 'HAS_RANK');
+  assert.equal((await holder.emit('offer_card', { cardId: original[0], claimedNoCard: 'true' })).code, 'BAD_PAYLOAD');
   const touches = [
     { s: 0, u: 0.5, v: 0.5, x: 0.2, y: 0.85, t: 300 },
     { s: 3, u: 0.6, v: 0.4, x: 0.6, y: 0.84, t: 900 },
   ];
-  assert.equal((await holder.emit('offer_card', { cardId: original[0], touches })).ok, true);
+  assert.equal((await holder.emit('offer_card', { cardId: original[0], touches, claimedNoCard: true, pressDurationMs: 350 })).ok, true);
   await until(() => active.game.phase === 'DECISION');
   const firstDecision = active.game.step;
+  assert.equal(active.game.offers[0].claimedNoCard, true, 'a giver who holds the rank may attach the claim');
+  assert.ok(active.events.some((e) => e.type === 'card_offered' && e.claimedNoCard));
   assert.equal(active.game.offers[0].card, null, 'offered card is face-down for the receiver');
   assert.ok(holder.game.offers[0].card, 'holder sees their own offer');
 
@@ -143,6 +145,7 @@ async function scenario(url, clients) {
   assert.equal(active.game.timeFrozen, true);
   assert.equal(active.game.phaseDuration, config.TIMERS.LIE_DEYE);
   assert.equal(active.game.lieDeye.touches.length, 2);
+  assert.equal(active.game.lieDeye.pressDurationMs, Math.min(350, active.game.lieDeye.decisionMs));
   assert.equal(active.game.lieDeye.offeredSlot, 0);
   assert.equal(active.game.lieDeyeWallet.balance, 3);
   assert.equal(bystander.game.lieDeye, null, 'bystander never sees telemetry');
@@ -173,7 +176,7 @@ async function scenario(url, clients) {
   await until(() => holder.game.phase === 'OFFER' && holder.game.hand.length === 3);
 
   const forcedCard = holder.game.hand.find((card) => !findWinningRank(owned.filter((other) => other.id !== card.id))).id;
-  assert.equal((await holder.emit('offer_card', { cardId: forcedCard })).ok, true);
+  assert.equal((await holder.emit('offer_card', { cardId: forcedCard, claimedNoCard: true })).ok, true);
   await until(() => active.game.hand.length === 5);
   assert.ok(active.game.hand.some((c) => c.id === forcedCard), '3rd card auto-accepted');
   assert.equal(holder.game.hand.length, 4);
@@ -182,6 +185,8 @@ async function scenario(url, clients) {
 
   // Bystander must never have seen any of the transferred card ids.
   assert.equal(bystander.game.lastTransfer.cardId, null);
+  assert.equal(active.game.lastTransfer.claimedNoCard, true);
+  assert.equal(active.game.lastTransfer.claimedRank, heldRank);
 
   // Both face-down slots are valid during the second decision.
   for (const offerIndex of [0, 1]) {

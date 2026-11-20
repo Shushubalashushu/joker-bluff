@@ -29,12 +29,12 @@ function readProfile(payload) {
   return profile;
 }
 
-function validateOffer({ cardId, touches, noCard }) {
+function validateOffer({ cardId, touches, claimedNoCard }) {
   if (typeof cardId !== 'string' || !CARD_ID.test(cardId)) throw new GameError('BAD_CARD', 'Invalid card');
   if (touches !== undefined && (!Array.isArray(touches) || touches.length > MAX_INPUT_SAMPLES)) {
     throw new GameError('BAD_PAYLOAD', 'Invalid touch samples');
   }
-  if (noCard !== undefined && typeof noCard !== 'boolean') {
+  if (claimedNoCard !== undefined && typeof claimedNoCard !== 'boolean') {
     throw new GameError('BAD_PAYLOAD', 'Invalid bluff claim');
   }
 }

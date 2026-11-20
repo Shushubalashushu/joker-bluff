@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 
 const { JokerBluffGame } = require('../src/game/JokerBluffGame');
 const { findWinningRank } = require('../src/game/deck');
-const { sanitizeTouches } = require('../src/game/telemetry');
+const { sanitizeTouches, sanitizePressDuration } = require('../src/game/telemetry');
 const { Room } = require('../src/rooms/Room');
 const { RoomManager } = require('../src/rooms/RoomManager');
 const { SessionStore } = require('../src/sessions/SessionStore');
@@ -25,12 +25,12 @@ function newGame(n = 3, opts = {}) {
 }
 
 /** Drives the game into DECISION for offer #1 with some touch telemetry. */
-function toDecision(g, touches) {
+function toDecision(g, touches, pressDurationMs) {
   g.requestCard(g.activeId, g.ranks[0]);
   g.advance(4200); // giver "thinks" for 4.2s
   const hand = g.hands.get(g.holderId);
   const slot = 2;
-  g.offerCard(g.holderId, hand[slot].id, { touches });
+  g.offerCard(g.holderId, hand[slot].id, { touches, pressDurationMs });
   return slot;
 }
 
@@ -109,6 +109,13 @@ test('telemetry: sanitizer clamps, drops garbage, sorts and downsamples', () => 
   assert.deepEqual(sanitizeTouches('junk', { handSize: 5, maxT: 1 }), []);
 });
 
+test('telemetry: hold duration handles absent inputs and stays within the server offer time', () => {
+  for (const input of [undefined, null, '800', NaN, Infinity]) assert.equal(sanitizePressDuration(input, 1000), null);
+  assert.equal(sanitizePressDuration(-20, 1000), 0);
+  assert.equal(sanitizePressDuration(612.4, 1000), 612);
+  assert.equal(sanitizePressDuration(6000, 1000), 1000);
+});
+
 test('lie deye: every player starts their first game with 4 tokens (use cap stays 3)', () => {
   const g = newGame(4);
   for (const id of g.seats) {
@@ -123,7 +130,7 @@ test('lie deye: freezes the clock at 60s and reveals telemetry ONLY to the activ
   const holder = g.holderId;
   const active = g.activeId;
   const bystander = g.seats.find((id) => id !== holder && id !== active);
-  const slot = toDecision(g, sampleTouches);
+  const slot = toDecision(g, sampleTouches, 815);
 
   assert.equal(g.getStateFor(active).lieDeye, null, 'nothing visible before spending a token');
   assert.equal(g.getStateFor(active).canUseLieDeye, true);
@@ -145,11 +152,13 @@ test('lie deye: freezes the clock at 60s and reveals telemetry ONLY to the activ
   assert.equal(va.lieDeye.handSize, 5);
   assert.equal(va.lieDeye.offeredSlot, slot);
   assert.equal(va.lieDeye.touches.length, 3);
+  assert.equal(va.lieDeye.pressDurationMs, 815);
   assert.equal(va.lieDeye.giverId, holder);
 
   assert.equal(g.getStateFor(holder).lieDeye, null);
   assert.equal(g.getStateFor(bystander).lieDeye, null);
   assert.ok(!JSON.stringify(g.getStateFor(bystander)).includes('"touches"'), 'no telemetry leak');
+  assert.ok(!JSON.stringify(g.getStateFor(bystander)).includes('"pressDurationMs"'), 'no hold duration leak');
   assert.equal(g.getStateFor(bystander).offers[0].lieDeyeUsed, true, 'everyone sees a token was used');
 });
 

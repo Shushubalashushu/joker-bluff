@@ -82,6 +82,7 @@ function HandCard({
   onDragStart,
   onDragOffer,
   onTouchSample,
+  onCardPress,
   resetKey,
   shuffleNonce,
 }) {
@@ -95,6 +96,9 @@ function HandCard({
   const opacity = useSharedValue(1);
   const hop = useSharedValue(0);
   const moveTick = useSharedValue(0);
+  const pressStartedAt = useSharedValue(0);
+  const pressPointer = useSharedValue(null);
+  const lastPressDuration = useSharedValue(null);
 
   useEffect(() => {
     br.value = withSpring(rotate, SPRING);
@@ -110,18 +114,22 @@ function HandCard({
     hop.value = withSequence(withTiming(1, { duration: 110 }), withSpring(0, { damping: 9, stiffness: 220 }));
   }, [shuffleNonce, hop]);
 
-  // Reset a thrown card when the server rejects the offer or the move changes.
+  // Reset drag and press tracking when an offer fails or the move changes.
   useEffect(() => {
     dragX.value = withSpring(0, SPRING);
     dragY.value = withSpring(0, SPRING);
     opacity.value = withTiming(1);
-  }, [resetKey, dragX, dragY, opacity]);
+    pressPointer.value = null;
+    pressStartedAt.value = 0;
+    lastPressDuration.value = null;
+  }, [resetKey, dragX, dragY, opacity, pressPointer, pressStartedAt, lastPressDuration]);
 
   const gesture = useMemo(() => {
     const select = onSelect || noop;
     const dragStart = onDragStart || noop;
     const offer = onDragOffer || noop;
     const sample = onTouchSample || noop;
+    const recordPress = onCardPress || noop;
     const cardId = card.id;
     const w = s.w;
     const h = s.h;
@@ -137,22 +145,44 @@ function HandCard({
         if (success) select(cardId);
       });
 
-    // DRAG = throw the card onto the table. Runs on the UI thread for smoothness.
-    const pan = Gesture.Pan()
-      .enabled(canDrag)
-      .minDistance(DRAG_MIN_DISTANCE)
-      // Lie Deye telemetry: where the giver's finger rests / hesitates while choosing.
-      // (x, y) are relative to this card -> normalized so they replay on any screen.
+    // Observe press-in and press-out independently of which gesture wins the race.
+    const touches = Gesture.Pan()
+      .manualActivation(true)
+      .enabled(canDrag && !!onCardPress)
       .onTouchesDown((e) => {
-        const t = e.allTouches[0];
-        if (t) runOnJS(sample)(cardId, t.x / w, t.y / h, t.absoluteX, t.absoluteY, true);
+        const t = e.changedTouches[0];
+        if (!t || pressPointer.value !== null) return;
+        pressPointer.value = t.id;
+        pressStartedAt.value = Date.now();
+        lastPressDuration.value = null;
+        moveTick.value = 0;
+        runOnJS(sample)(cardId, t.x / w, t.y / h, t.absoluteX, t.absoluteY, true);
       })
       .onTouchesMove((e) => {
         moveTick.value = (moveTick.value + 1) % TOUCH_MOVE_EVERY;
         if (moveTick.value !== 0) return;
-        const t = e.allTouches[0];
+        const t = e.allTouches.find((touch) => touch.id === pressPointer.value);
         if (t) runOnJS(sample)(cardId, t.x / w, t.y / h, t.absoluteX, t.absoluteY, false);
       })
+      .onTouchesUp((e) => {
+        if (!e.changedTouches.some((touch) => touch.id === pressPointer.value)) return;
+        const duration = Math.max(0, Date.now() - pressStartedAt.value);
+        lastPressDuration.value = duration;
+        pressPointer.value = null;
+        pressStartedAt.value = 0;
+        runOnJS(recordPress)(cardId, duration);
+      })
+      .onTouchesCancelled(() => {
+        if (pressPointer.value === null) return;
+        pressPointer.value = null;
+        pressStartedAt.value = 0;
+        lastPressDuration.value = null;
+      });
+
+    // DRAG = throw the card onto the table. Runs on the UI thread for smoothness.
+    const pan = Gesture.Pan()
+      .enabled(canDrag)
+      .minDistance(DRAG_MIN_DISTANCE)
       .onStart(() => {
         dragging.value = withTiming(1, { duration: 120 });
         runOnJS(dragStart)(cardId);
@@ -166,7 +196,10 @@ function HandCard({
           // Fly toward the table, then let the server confirm.
           dragY.value = withTiming(-280, { duration: 220 });
           opacity.value = withTiming(0, { duration: 220 });
-          runOnJS(offer)(cardId);
+          // Native release callbacks can arrive in either order. Pass the drag's
+          // duration with the offer so it doesn't wait on the JS telemetry update.
+          const duration = pressStartedAt.value ? Math.max(0, Date.now() - pressStartedAt.value) : lastPressDuration.value;
+          runOnJS(offer)(cardId, duration);
         } else {
           dragX.value = withSpring(0, SPRING);
           dragY.value = withSpring(0, SPRING);
@@ -176,8 +209,9 @@ function HandCard({
         dragging.value = withTiming(0, { duration: 150 });
       });
 
-    return Gesture.Race(pan, tap);
-  }, [canDrag, canSelect, card.id, s.w, s.h, onSelect, onDragStart, onDragOffer, onTouchSample, dragX, dragY, dragging, opacity, moveTick]);
+    return Gesture.Simultaneous(Gesture.Race(pan, tap), touches);
+  }, [canDrag, canSelect, card.id, s.w, s.h, onSelect, onDragStart, onDragOffer, onTouchSample, onCardPress,
+    dragX, dragY, dragging, opacity, moveTick, pressPointer, pressStartedAt, lastPressDuration]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
@@ -226,6 +260,7 @@ export function handHeight(size, count = 5) {
  * - When `canDrag`, drag a card upward past the threshold to offer it.
  * - `concealed` (Anti-spy): every card flips face-down IN PLACE.
  * - `onTouchSample(cardId, u, v, absX, absY, isDown)` streams touch telemetry.
+ * - `onCardPress(cardId, duration)` records completed card holds in milliseconds.
  * - `shuffleNonce`: bump it to play the shuffle "hop".
  *
  * Each gesture target is a direct sibling with its own native slot frame.
@@ -241,6 +276,7 @@ export default function FannedHand({
   canDrag = false,
   onDragOffer,
   onTouchSample,
+  onCardPress,
   newCardId,
   concealed = false,
   resetKey,
@@ -289,6 +325,7 @@ export default function FannedHand({
             onDragStart={onDragStart}
             onDragOffer={onDragOffer}
             onTouchSample={onTouchSample}
+            onCardPress={onCardPress}
             resetKey={resetKey}
             shuffleNonce={shuffleNonce}
           />

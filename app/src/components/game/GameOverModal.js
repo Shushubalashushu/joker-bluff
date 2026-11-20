@@ -44,8 +44,8 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
           <Animated.View entering={BounceIn.duration(700)} style={styles.card}>
             <Text style={styles.confetti}>🎉 ✨ 🎊</Text>
             <Text style={[styles.headline, textStyle]}>{t(iWon ? 'results.win' : iLost ? 'results.loss' : 'results.over')}</Text>
-            {lastTransfer?.verifiedNoCard && (
-              <Text style={[styles.verified, textStyle]}>{t('table.verifiedTransfer', { rank: lastTransfer.verifiedRank })}</Text>
+            {lastTransfer?.claimedNoCard && (
+              <Text style={[styles.claim, textStyle]}>{t('nocard.claim')}</Text>
             )}
 
             <View style={styles.podium}>
@@ -138,7 +138,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
 
 const styles = StyleSheet.create({
   error: { fontFamily: fonts.semibold, color: colors.darkRed, textAlign: 'center' },
-  verified: { fontFamily: fonts.bold, color: colors.darkBlue, textAlign: 'center' },
+  claim: { fontFamily: fonts.bold, color: colors.darkBlue, textAlign: 'center' },
   backdrop: { ...viewport, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 18 },
   card: {
     width: '100%',

@@ -9,7 +9,7 @@ export const C2S = Object.freeze({
   PLAY_AGAIN: 'play_again',
   END_GAME: 'end_game', // host only: terminate the match, everyone back to the lobby
   REQUEST_CARD: 'request_card',
-  OFFER_CARD: 'offer_card', // { cardId, touches: [{c,u,v,x,y,t}], noCard?: true } (noCard = "I don't have it", server-verified)
+  OFFER_CARD: 'offer_card', // { cardId, touches?, pressDurationMs?, claimedNoCard? }
   PLAYER_DECISION: 'player_decision',
   USE_LIE_DEYE: 'use_lie_deye', // spend a token during DECISION (60s freeze + VAR stats)
   SHUFFLE_HAND: 'shuffle_hand', // reorder my hand (any time)

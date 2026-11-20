@@ -126,7 +126,7 @@ export default function GameScreen() {
 
   const matchId = game?.matchId;
   const moveKey = matchId ? `${matchId}:${game.step}` : null;
-  const claimNoCard = !!game?.canClaimNoCard && claimMove === moveKey;
+  const claimNoCard = moveKey !== null && claimMove === moveKey;
   const moveRef = useRef(moveKey);
   const matchRef = useRef(matchId);
   const pendingMove = useRef(null);
@@ -155,7 +155,7 @@ export default function GameScreen() {
   // Server events -> toast + sfx hooks.
   useEffect(() => {
     const event = events.find((e) => e.type === 'game_over')
-      ?? events.find((e) => e.type === 'card_transferred' && e.verifiedNoCard)
+      ?? events.find((e) => e.type === 'card_transferred' && e.claimedNoCard)
       ?? events[events.length - 1];
     if (!event) return;
     setToast({ event, key: `${event.type}-${event.at}` });
@@ -176,9 +176,11 @@ export default function GameScreen() {
   const recording = !!game && isHolder && game.phase === PHASES.OFFER;
   const phaseStartedAt = game?.phaseStartedAt;
   const touchesRef = useRef([]);
+  const cardPresses = useRef(new Map());
   const lastSampleAt = useRef(0);
   useEffect(() => {
     touchesRef.current = [];
+    cardPresses.current.clear();
     lastSampleAt.current = 0;
   }, [moveKey]);
 
@@ -200,6 +202,10 @@ export default function GameScreen() {
     },
     [recording, moveKey, phaseStartedAt, clockOffset, r.width, r.height]
   );
+
+  const onCardPress = useCallback((cardId, duration) => {
+    if (recording && moveRef.current === moveKey) cardPresses.current.set(cardId, duration);
+  }, [recording, moveKey]);
 
   // ------------------------------------------------------------ Lie Deye overlay (receiver side)
   const lieDeyeKey = game?.lieDeye ? moveKey : null;
@@ -236,9 +242,12 @@ export default function GameScreen() {
   const onDecide = useCallback((accept, offerIndex) => run(() => decide(accept, offerIndex)), [run, decide]);
   const onLieDeye = useCallback(() => run(spendLieDeye), [run, spendLieDeye]);
   const onOffer = useCallback(
-    async (cardId) => {
+    async (cardId, dragDuration) => {
       if (!cardId) return;
-      const ok = await run(() => offerCard(cardId, touchesRef.current.slice(), claimNoCard));
+      const pressDurationMs = dragDuration ?? cardPresses.current.get(cardId);
+      const ok = await run(() => offerCard(cardId, {
+        touches: touchesRef.current.slice(), claimedNoCard: claimNoCard, pressDurationMs,
+      }));
       if (!ok && moveRef.current === moveKey) setResetNonce((n) => n + 1);
     },
     [run, offerCard, moveKey, claimNoCard]
@@ -489,6 +498,7 @@ export default function GameScreen() {
               canDrag={canOffer}
               onDragOffer={onOffer}
               onTouchSample={recording ? onTouchSample : undefined}
+              onCardPress={recording ? onCardPress : undefined}
               newCardId={newCardId}
               concealed={concealed}
               resetKey={`${moveKey}:${resetNonce}`}

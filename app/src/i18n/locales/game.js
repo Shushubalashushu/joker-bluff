@@ -76,15 +76,14 @@ export default {
     'action.lieDeyeOnYou': '{name} used Lie Deye on your card…',
     'action.mutedTrading': "You're muted - {a} & {b} are trading.",
 
-    // ---- System Verified Forced Bluff ("I don't have it")
+    // ---- Player claim ("I don't have it")
     'nocard.button': "I don't have it",
-    'nocard.badge': 'System Verified',
-    'nocard.armed': '🔵✔ Verified: you have no {rank}. Now pick ANY card to pass face-down.',
-    'nocard.armedFinal': '✔ No {rank}. Pick a face-down card. They must take it.',
-    'nocard.offer': 'Pass with ✔ stamp',
-    'nocard.cancel': 'Cancel',
-    'nocard.received': '🔵✔ System verified: {name} has no {rank} - this card is a forced bluff.',
-    'nocard.a11yToggle': "I don't have it - system verified",
+    'nocard.armed': "Pick a card to send with your claim.",
+    'nocard.armedFinal': "Pick a card to send with your claim. They must take it.",
+    'nocard.offer': "Offer with claim",
+    'nocard.received': "💬 Claims: I don't have it · #{offers}",
+    'nocard.claim': "💬 Claims: I don't have it",
+    'nocard.a11yToggle': "I don't have it claim",
 
     // ---- Lie Deye strip
     'ld.title': 'Lie Deye',
@@ -104,10 +103,6 @@ export default {
     'table.youPicking': 'You are picking a rank…',
     'table.picking': '{name} is picking a rank…',
     'table.a11yLieDeye': 'Lie Deye used on this card',
-    'table.verified': 'VERIFIED',
-    'table.verifiedNo': 'No {rank}',
-    'table.verifiedTransfer': '✔ Verified bluff · no {rank}',
-    'table.a11yVerified': 'System verified: the giver has no {rank}',
   },
 
   he: {
@@ -175,14 +170,13 @@ export default {
     'action.lieDeyeOnYou': '{name} השתמש/ה ב-Lie Deye על הקלף שלך…',
     'action.mutedTrading': 'את/ה מושתק/ת - {a} ו{b} מחליפים קלפים.',
 
-    'nocard.button': 'אין לי',
-    'nocard.badge': 'מאומת ע״י המערכת',
-    'nocard.armed': '🔵✔ מאומת: אין לך {rank}. עכשיו בחר/י קלף כלשהו למסירה הפוכה.',
-    'nocard.armedFinal': '✔ אין לך {rank}. בחר/י קלף הפוך. חובה לקחת אותו.',
-    'nocard.offer': 'מסור עם חותמת ✔',
-    'nocard.cancel': 'ביטול',
-    'nocard.received': '🔵✔ אומת ע״י המערכת: ל{name} אין {rank} - זה בלוף מאולץ.',
-    'nocard.a11yToggle': 'אין לי - מאומת ע״י המערכת',
+    'nocard.button': "אין לי את הקלף",
+    'nocard.armed': "בחרו קלף לצירוף הטענה.",
+    'nocard.armedFinal': "בחרו קלף לצירוף הטענה. חובה לקחת אותו.",
+    'nocard.offer': "מסירה עם הטענה",
+    'nocard.received': "💬 טוען: אין לי את הקלף · הצעה {offers}",
+    'nocard.claim': "💬 טוען: אין לי את הקלף",
+    'nocard.a11yToggle': "טענת אין לי את הקלף",
 
     'ld.title': 'Lie Deye',
     'ld.var': 'VAR',
@@ -200,9 +194,5 @@ export default {
     'table.youPicking': 'את/ה בוחר/ת ערך…',
     'table.picking': '{name} בוחר/ת ערך…',
     'table.a11yLieDeye': 'נעשה שימוש ב-Lie Deye על הקלף הזה',
-    'table.verified': 'מאומת',
-    'table.verifiedNo': 'אין {rank}',
-    'table.verifiedTransfer': '✔ בלוף מאומת · אין {rank}',
-    'table.a11yVerified': 'אומת ע״י המערכת: לנותן/ת אין {rank}',
   },
 };

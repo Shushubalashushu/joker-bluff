@@ -84,6 +84,9 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
 
   const forcedNext = data.offerNumber === (game.maxOffers || 3) - 1;
   const contentW = Math.min(width, 520) - 32;
+  const hold = data.pressDurationMs;
+  const holdLabel = hold == null ? 'var.holdMissing' : hold < 250 ? 'var.holdQuick' : hold < 700 ? 'var.holdSteady' : 'var.holdLong';
+  const holdValue = hold == null ? '—' : hold < 1000 ? t('var.milliseconds', { ms: hold }) : secs(t, hold);
 
   return (
     <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={styles.backdrop}>
@@ -120,6 +123,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
               <StatTile label={t('var.switches')} value={String(stats.switches)} tone={stats.switches >= 3 ? colors.red : colors.yellow} />
               <StatTile label={t('var.shuffles')} value={String(data.shuffles)} tone={data.shuffles ? colors.pink : colors.yellow} />
               <StatTile label={t('var.pickedSlot')} value={`#${data.offeredSlot + 1}`} sub={t('var.fromLeft')} />
+              <StatTile label={t('var.holdDuration')} value={holdValue} sub={t(holdLabel)} tone={colors.teal} />
             </View>
 
             <Text style={[styles.section, alignStart]}>{t('var.heatmap')}</Text>
@@ -161,8 +165,8 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
         </ScrollView>
 
         <View style={styles.footer}>
-          {game.offers[data.offerNumber - 1]?.verifiedNoCard && (
-            <Text style={[styles.warn, textStyle]}>{t('table.verifiedTransfer', { rank: game.requestedRank })}</Text>
+          {game.offers[data.offerNumber - 1]?.claimedNoCard && (
+            <Text style={[styles.warn, textStyle]}>{t('nocard.claim')}</Text>
           )}
           {forcedNext && <Text style={[styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>}
           <OfferDecisionButtons offerCount={data.offerNumber} onDecide={onDecide} busy={busy} />

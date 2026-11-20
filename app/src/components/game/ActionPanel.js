@@ -83,12 +83,6 @@ function LieDeyeBar({ game, busy, onUse, onOpen }) {
   );
 }
 
-/**
- * 🔵✔ "I don't have it" (System Verified Forced Bluff) toggle for the GIVER.
- * Only rendered when the SERVER says `canClaimNoCard` (it checked the hand).
- * Arming it doesn't send anything yet: the giver still picks any card, and the
- * claim travels with that offer (`noCard: true`) - the server re-validates it.
- */
 function NoCardToggle({ armed, onToggle, disabled }) {
   const { t, textStyle } = useI18n();
   return (
@@ -100,14 +94,11 @@ function NoCardToggle({ armed, onToggle, disabled }) {
       accessibilityLabel={t('nocard.a11yToggle')}
       style={({ pressed }) => [styles.noCard, armed && styles.noCardOn, pressed && styles.noCardPressed, disabled && { opacity: 0.5 }]}
     >
-      <View style={[styles.checkDot, armed && styles.checkDotOn]}>
-        <Text style={styles.checkMark}>✔</Text>
-      </View>
+      <Text>💬</Text>
       <View style={styles.noCardTextCol}>
         <Text style={[styles.noCardTitle, armed && { color: colors.white }, textStyle]}>
-          {armed ? t('nocard.cancel') : t('nocard.button')}
+          {t('nocard.button')}
         </Text>
-        <Text style={[styles.noCardBadge, armed && { color: colors.white }, textStyle]}>{t('nocard.badge')}</Text>
       </View>
     </Pressable>
   );
@@ -117,7 +108,7 @@ function NoCardToggle({ armed, onToggle, disabled }) {
  * Context-sensitive controls. What you see depends on your role this turn:
  *   ACTIVE (asker)  -> pick a rank, then Accept / Reject offers 1 & 2 (+ Lie Deye)
  *   HOLDER (giver)  -> choose a card to offer (tap + button, or drag up)
- *                      (+ "I don't have it" when the server verified you lack the rank)
+ *                      (+ optional "I don't have it" claim)
  *   everyone else   -> isolated / muted spectator message
  */
 export default function ActionPanel({
@@ -156,7 +147,7 @@ export default function ActionPanel({
   } else if (game.phase === PHASES.OFFER && isHolder) {
     const nextNumber = offerNumber + 1;
     const final = nextNumber === game.maxOffers;
-    const armed = claimNoCard && game.canClaimNoCard;
+    const armed = claimNoCard;
     const title = selectedCardId
       ? armed
         ? t('nocard.offer')
@@ -169,15 +160,15 @@ export default function ActionPanel({
         <Text style={[styles.title, compact && styles.titleCompact, textStyle]}>
           {rich(t('action.wants'), { name: activeName, rank: hl(game.requestedRank) })}
         </Text>
-        <Text style={[styles.sub, final && styles.warn, armed && styles.verifiedSub, textStyle]}>
+        <Text style={[styles.sub, final && styles.warn, armed && styles.claimSub, textStyle]}>
           {armed
-            ? t(final ? 'nocard.armedFinal' : 'nocard.armed', { rank: game.requestedRank })
+            ? t(final ? 'nocard.armedFinal' : 'nocard.armed')
             : final
             ? t('action.finalOffer')
             : t('action.offerHint', { n: nextNumber })}
         </Text>
         <View style={styles.offerRow}>
-          {game.canClaimNoCard && <NoCardToggle armed={armed} onToggle={onToggleNoCard} disabled={busy} />}
+          <NoCardToggle armed={armed} onToggle={onToggleNoCard} disabled={busy} />
           <CartoonButton
             title={title}
             size="sm"
@@ -192,28 +183,24 @@ export default function ActionPanel({
       </>
     );
   } else if (game.phase === PHASES.DECISION && isActive) {
+    const claims = game.offers.filter((offer) => offer.claimedNoCard);
     content = (
       <>
         <Text style={[styles.title, compact && styles.titleCompact, textStyle]}>
           {t('action.offerFrom', { n: offerNumber, name: holderName })}
           {pendingOffer?.lieDeyeUsed ? ' 👁️' : ''}
         </Text>
-        {pendingOffer?.verifiedNoCard ? (
-          // The giver proved (server-checked) they have no card of my rank: it's a bluff by necessity.
-          <View style={styles.verifiedBox}>
-            <Text style={[styles.verifiedText, textStyle]}>
-              {t('nocard.received', { name: holderName, rank: game.requestedRank })}
+        {!!claims.length && (
+          <View style={styles.claimBox}>
+            <Text style={[styles.claimText, textStyle]}>
+              {t('nocard.received', { offers: claims.map(({ number }) => number).join(' / ') })}
             </Text>
           </View>
-        ) : (
-          (!compact || offerNumber === 2) && (
-            <Text style={[styles.sub, offerNumber === 2 && styles.warn, textStyle]}>
-              {offerNumber === 2 ? t('action.rejectWarn') : t('action.bluffQ')}
-            </Text>
-          )
         )}
-        {pendingOffer?.verifiedNoCard && offerNumber === 2 && (
-          <Text style={[styles.sub, styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>
+        {(offerNumber === 2 || (!compact && claims.length === 0)) && (
+          <Text style={[styles.sub, offerNumber === 2 && styles.warn, textStyle]}>
+            {t(offerNumber === 2 ? 'action.rejectWarn' : 'action.bluffQ')}
+          </Text>
         )}
         <LieDeyeBar game={game} busy={busy} onUse={onLieDeye} onOpen={onOpenLieDeye} />
         <OfferDecisionButtons offerCount={offerNumber} onDecide={onDecide} busy={busy || !pendingOffer} compact={compact} />
@@ -297,7 +284,7 @@ const styles = StyleSheet.create({
   isolatedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   isolatedIcon: { fontSize: 22 },
   isolatedText: { flexShrink: 1, fontFamily: fonts.semibold, fontSize: 14, color: colors.night },
-  // System Verified Forced Bluff
+  // Player claim
   noCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -311,23 +298,10 @@ const styles = StyleSheet.create({
   },
   noCardOn: { backgroundColor: colors.blue, borderColor: colors.night },
   noCardPressed: { transform: [{ translateY: 2 }] },
-  checkDot: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: colors.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.white,
-  },
-  checkDotOn: { backgroundColor: colors.blue, borderColor: colors.white },
-  checkMark: { color: colors.blue, fontFamily: fonts.bold, fontSize: 13, marginTop: -1 },
   noCardTextCol: { maxWidth: 104 },
   noCardTitle: { fontFamily: fonts.bold, fontSize: 13, color: colors.night },
-  noCardBadge: { fontFamily: fonts.semibold, fontSize: 10, color: colors.blue },
-  verifiedSub: { color: colors.blue },
-  verifiedBox: {
+  claimSub: { color: colors.blue },
+  claimBox: {
     alignSelf: 'stretch',
     backgroundColor: 'rgba(43,123,255,0.12)',
     borderColor: colors.blue,
@@ -336,7 +310,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
-  verifiedText: { fontFamily: fonts.bold, fontSize: 13, color: colors.blue, textAlign: 'center' },
+  claimText: { fontFamily: fonts.bold, fontSize: 13, color: colors.blue, textAlign: 'center' },
   // Lie Deye
   ldRow: {
     alignSelf: 'stretch',

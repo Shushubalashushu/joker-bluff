@@ -308,69 +308,28 @@ test('four of a kind + Joker is never a winning hand', () => {
   assert.equal(findWinningRank(four), 'K');
 });
 
-test('verified forced bluff: allowed only when the holder truly owns no card of the requested rank', () => {
-  const g = newGame(4, 14);
-  const { pid: h, R } = rigHolderQuads(g);
-  const a = g.activeId;
-  const other = g.seats.find((id) => id !== h && id !== a);
+test('player claim: the giver may claim they lack a rank whether or not they hold it', () => {
+  for (const holdsRank of [true, false]) {
+    const g = newGame(4, 14);
+    const { pid: holder, R: ownedRank } = rigHolderQuads(g);
+    const asker = g.activeId;
+    const hand = g.hands.get(holder);
+    const rank = holdsRank ? ownedRank : g.ranks.find((candidate) => !hand.some((card) => card.rank === candidate));
+    g.requestCard(asker, rank);
+    const [offered] = g.offerCard(holder, hand[0].id, { claimedNoCard: true });
+    assert.equal(offered.claimedNoCard, true);
+    assert.equal(offered.rank, rank);
+    const [visibleOffer] = g.getStateFor(asker).offers;
+    assert.equal(visibleOffer.claimedNoCard, true);
+    assert.equal(visibleOffer.card, null);
+    g.decide(asker, false);
 
-  // Holder owns every R -> claim refused.
-  g.requestCard(a, R);
-  assert.equal(g.getStateFor(h).canClaimNoCard, false);
-  assert.throws(() => g.offerCard(h, g.hands.get(h)[0].id, { noCard: true }), { code: 'HAS_RANK' });
-  assert.equal(g.offers.length, 0, 'refused claim does not place a card');
-  assert.equal(g.hands.get(h).length, 5);
-
-  // Force a new transaction where the holder lacks the requested rank.
-  const g2 = newGame(4, 15);
-  const r2 = rigHolderQuads(g2);
-  const h2 = g2.holderId;
-  const a2 = g2.activeId;
-  const missing = g2.ranks.find((rk) => !g2.hands.get(h2).some((c) => c.rank === rk));
-  g2.requestCard(a2, missing);
-  assert.equal(g2.getStateFor(h2).canClaimNoCard, true, 'server confirms the holder lacks it');
-  assert.equal(g2.getStateFor(a2).canClaimNoCard, false, 'only the holder gets the button');
-  const card = g2.hands.get(h2).find((c) => c.rank === r2.R);
-  const ev = g2.offerCard(h2, card.id, { noCard: true });
-  assert.equal(ev[0].verifiedNoCard, true);
-  assert.equal(ev[0].rank, missing);
-  const seen = g2.getStateFor(a2).offers[0];
-  assert.equal(seen.verifiedNoCard, true, 'receiver sees the verified stamp');
-  assert.equal(seen.card, null, 'the card itself stays face-down');
-  assert.equal(g2.getStateFor(g2.seats.find((id) => id !== h2 && id !== a2)).offers[0].verifiedNoCard, true);
-  // The flag is never inferred: a normal offer is unstamped.
-  g2.decide(a2, false);
-  g2.offerCard(h2, g2.hands.get(h2)[0].id);
-  assert.equal(g2.getStateFor(a2).offers[1].verifiedNoCard, false);
-  void other;
-});
-
-test('verified forced bluff: a requested-rank card the holder already put on the table still counts as owned', () => {
-  const g = newGame(4, 16);
-  const h = g.holderId;
-  const a = g.activeId;
-  const hand = g.hands.get(h);
-  const R = hand.find((c) => c.rank !== 'JOKER').rank;
-  const mine = hand.filter((c) => c.rank === R);
-  // Leave the holder exactly ONE card of rank R by swapping extras away.
-  const victim = g.seats.find((id) => id !== h);
-  for (const extraR of mine.slice(1)) {
-    const vh = g.hands.get(victim);
-    const j = vh.findIndex((c) => c.rank !== R);
-    const i = hand.indexOf(extraR);
-    [hand[i], vh[j]] = [vh[j], hand[i]];
+    g.offerCard(holder, hand[0].id);
+    assert.equal(g.getStateFor(asker).offers[1].claimedNoCard, false, 'claims are opt-in for each offer');
   }
-  const only = hand.find((c) => c.rank === R);
-  g.requestCard(a, R);
-  g.offerCard(h, only.id); // honest offer of the real card
-  g.decide(a, false); // rejected - but it's still the holder's
-  assert.equal(g.getStateFor(h).canClaimNoCard, false);
-  const priorState = g.getStateFor(h);
-  assert.throws(() => g.offerCard(h, g.hands.get(h)[0].id, { noCard: true }), { code: 'HAS_RANK' });
-  assert.deepEqual(g.getStateFor(h), priorState, 'a refused claim preserves the current offer step and hand');
 });
 
-test('verified forced bluff: the accepted third offer keeps its proof and only the receiver gets its identity', () => {
+test('player claim: the accepted third offer keeps its declaration and only the receiver gets its identity', () => {
   const g = newGame(4, 32);
   const { pid: holder, R: quadRank } = rigHolderQuads(g);
   const asker = g.activeId;
@@ -384,15 +343,14 @@ test('verified forced bluff: the accepted third offer keeps its proof and only t
   }
 
   const card = hand.find((c) => c.rank === quadRank);
-  const [, transfer] = g.offerCard(holder, card.id, { noCard: true });
+  const [, transfer] = g.offerCard(holder, card.id, { claimedNoCard: true });
   assert.equal(transfer.forced, true);
-  assert.equal(transfer.verifiedNoCard, true);
-  assert.equal(transfer.verifiedRank, missingRank);
+  assert.equal(transfer.claimedNoCard, true);
+  assert.equal(transfer.claimedRank, missingRank);
   assert.equal(Object.hasOwn(transfer, 'cardId'), false);
   assert.equal(g.getStateFor(asker).lastTransfer.cardId, card.id);
   assert.equal(g.getStateFor(observer).lastTransfer.cardId, null);
-  assert.equal(g.getStateFor(observer).lastTransfer.verifiedRank, missingRank);
-  assert.equal(g.getStateFor(holder).canClaimNoCard, false);
+  assert.equal(g.getStateFor(observer).lastTransfer.claimedRank, missingRank);
   assert.equal(g.result, null);
 });
 

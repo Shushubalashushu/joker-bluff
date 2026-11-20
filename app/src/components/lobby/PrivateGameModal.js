@@ -36,7 +36,8 @@ function PrivateGameSheet({ visible, onClose, onJoin, onCreate }) {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(null); // 'join' | 'create' | null
   const [error, setError] = useState(null);
-  const { targetRef, liftStyle } = useKeyboardLift({ margin: 12, enabled: visible });
+  // Lift past the Join button below the focused code field on iOS.
+  const { targetRef, liftStyle } = useKeyboardLift({ margin: 90, enabled: visible });
 
   useEffect(() => {
     if (visible) {
@@ -73,32 +74,30 @@ function PrivateGameSheet({ visible, onClose, onJoin, onCreate }) {
           {/* ---- Option 1: join with a code */}
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, alignStart]}>{t('private.joinFriend')}</Text>
-            <View style={styles.joinRow}>
-              <TextInput
-                ref={targetRef}
-                value={cleanCode}
-                onChangeText={(t) => setCode(t)}
-                placeholder={t('private.code')}
-                placeholderTextColor={colors.muted}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                maxLength={ROOM_CODE_LENGTH}
-                returnKeyType="go"
-                onSubmitEditing={() => canJoin && run('join', () => onJoin(cleanCode))}
-                style={styles.codeInput}
-                accessibilityLabel={t('private.enterCode')}
-              />
-              <CartoonButton
-                title={t('private.join')}
-                size="md"
-                gradient={gradients.success}
-                lipColor={colors.darkGreen}
-                disabled={!canJoin}
-                loading={busy === 'join'}
-                onPress={() => run('join', () => onJoin(cleanCode))}
-                style={styles.joinBtn}
-              />
-            </View>
+            <TextInput
+              ref={targetRef}
+              value={cleanCode}
+              onChangeText={(t) => setCode(t)}
+              placeholder={t('private.code')}
+              placeholderTextColor={colors.muted}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={ROOM_CODE_LENGTH}
+              returnKeyType="go"
+              onSubmitEditing={() => canJoin && run('join', () => onJoin(cleanCode))}
+              style={styles.codeInput}
+              accessibilityLabel={t('private.enterCode')}
+            />
+            <CartoonButton
+              title={t('private.join')}
+              size="md"
+              gradient={gradients.success}
+              lipColor={colors.darkGreen}
+              disabled={!canJoin}
+              loading={busy === 'join'}
+              onPress={() => run('join', () => onJoin(cleanCode))}
+              style={styles.joinBtn}
+            />
           </View>
 
           <View style={styles.dividerRow}>
@@ -164,9 +163,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sectionTitle: { fontFamily: fonts.bold, fontSize: 18, color: colors.night },
-  joinRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   codeInput: {
-    flex: 1,
+    width: '100%',
     height: 62,
     borderRadius: 16,
     borderWidth: 3,
@@ -178,7 +176,7 @@ const styles = StyleSheet.create({
     letterSpacing: 6,
     color: colors.purple,
   },
-  joinBtn: { width: 110 },
+  joinBtn: { width: '100%' },
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   dividerLine: { flex: 1, height: 3, borderRadius: 2, backgroundColor: colors.night, opacity: 0.15 },
   dividerText: { fontFamily: fonts.bold, color: colors.muted, fontSize: 16 },
