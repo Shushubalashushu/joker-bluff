@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
+import { useI18n } from '../../i18n';
 import { colors, fonts } from '../../theme';
 
 /** Shows each new message for a couple of seconds. Keyed by the event timestamp. */
 export default function GameToast({ message, eventKey }) {
+  const { textStyle } = useI18n();
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
@@ -17,7 +19,7 @@ export default function GameToast({ message, eventKey }) {
   if (!visible || !message) return null;
   return (
     <Animated.View key={eventKey} entering={FadeInDown.springify()} exiting={FadeOutUp} pointerEvents="none" style={styles.toast}>
-      <Text style={styles.text} numberOfLines={2}>
+      <Text style={[styles.text, textStyle]} numberOfLines={2}>
         {message}
       </Text>
     </Animated.View>

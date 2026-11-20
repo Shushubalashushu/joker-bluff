@@ -216,6 +216,30 @@ test('auto-win: rejected cards come back first - a returned quad card still comp
   assert.equal(g.result.winnerId, h);
 });
 
+test('auto-win: a forced third transfer of the Joker wins only after both rejected cards return', () => {
+  const g = newGame(4, 31);
+  const { pid: holder, R: rank } = rigHolderQuads(g);
+  const asker = g.activeId;
+  const hand = g.hands.get(holder);
+  const jokerHand = [...g.hands.values()].find((cards) => cards.some((c) => c.rank === 'JOKER'));
+  if (jokerHand !== hand) {
+    const jokerIndex = jokerHand.findIndex((c) => c.rank === 'JOKER');
+    const extraIndex = hand.findIndex((c) => c.rank !== rank);
+    [hand[extraIndex], jokerHand[jokerIndex]] = [jokerHand[jokerIndex], hand[extraIndex]];
+  }
+
+  g.requestCard(asker, rank);
+  for (let i = 0; i < 2; i++) {
+    g.offerCard(holder, hand.find((card) => card.rank === rank).id);
+    g.decide(asker, false);
+    assert.equal(g.result, null);
+  }
+  const events = g.offerCard(holder, hand.find((card) => card.rank === 'JOKER').id);
+  assert.deepEqual(events.map((event) => event.type), ['card_offered', 'card_transferred', 'game_over']);
+  assert.deepEqual(g.result, { winnerId: holder, loserId: asker, winningRank: rank, auto: true });
+  assert.deepEqual(hand.map((card) => card.rank), [rank, rank, rank, rank]);
+});
+
 test('auto-win: passing a quad card (keeping the odd card) is not a win; the receiver never wins', () => {
   const g = newGame(4, 13);
   const { pid: h, R } = rigHolderQuads(g);
@@ -292,7 +316,35 @@ test('verified forced bluff: a requested-rank card the holder already put on the
   g.offerCard(h, only.id); // honest offer of the real card
   g.decide(a, false); // rejected - but it's still the holder's
   assert.equal(g.getStateFor(h).canClaimNoCard, false);
+  const priorState = g.getStateFor(h);
   assert.throws(() => g.offerCard(h, g.hands.get(h)[0].id, { noCard: true }), { code: 'HAS_RANK' });
+  assert.deepEqual(g.getStateFor(h), priorState, 'a refused claim preserves the current offer step and hand');
+});
+
+test('verified forced bluff: the accepted third offer keeps its proof and only the receiver gets its identity', () => {
+  const g = newGame(4, 32);
+  const { pid: holder, R: quadRank } = rigHolderQuads(g);
+  const asker = g.activeId;
+  const observer = g.seats.find((id) => id !== holder && id !== asker);
+  const hand = g.hands.get(holder);
+  const missingRank = g.ranks.find((rank) => !hand.some((card) => card.rank === rank));
+  g.requestCard(asker, missingRank);
+  for (let i = 0; i < 2; i++) {
+    g.offerCard(holder, hand.find((card) => card.rank === quadRank).id);
+    g.decide(asker, false);
+  }
+
+  const card = hand.find((c) => c.rank === quadRank);
+  const [, transfer] = g.offerCard(holder, card.id, { noCard: true });
+  assert.equal(transfer.forced, true);
+  assert.equal(transfer.verifiedNoCard, true);
+  assert.equal(transfer.verifiedRank, missingRank);
+  assert.equal(Object.hasOwn(transfer, 'cardId'), false);
+  assert.equal(g.getStateFor(asker).lastTransfer.cardId, card.id);
+  assert.equal(g.getStateFor(observer).lastTransfer.cardId, null);
+  assert.equal(g.getStateFor(observer).lastTransfer.verifiedRank, missingRank);
+  assert.equal(g.getStateFor(holder).canClaimNoCard, false);
+  assert.equal(g.result, null);
 });
 
 test('timeouts: server auto-plays and the 3rd offer is still forced', () => {

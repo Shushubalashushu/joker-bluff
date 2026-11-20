@@ -21,11 +21,12 @@ export default function LanguageToggle({ compact = false, style }) {
       accessibilityLabel={t('lang.toggleA11y')}
       style={({ pressed }) => [styles.pill, { height: h, borderRadius: h / 2 }, pressed && styles.pressed, style]}
     >
-      {!compact && <Text style={styles.globe}>🌐</Text>}
-      <View style={[styles.seg, !he && styles.segOn]}>
+      <Text style={[styles.globe, compact && styles.segTextSm]}>🌐</Text>
+      <View style={[styles.seg, compact && styles.segCompact, !he && styles.segOn]}>
         <Text style={[styles.segText, compact && styles.segTextSm, !he && styles.segTextOn]}>EN</Text>
       </View>
-      <View style={[styles.seg, he && styles.segOn]}>
+      <Text style={styles.separator}>/</Text>
+      <View style={[styles.seg, compact && styles.segCompact, he && styles.segOn]}>
         <Text style={[styles.segText, compact && styles.segTextSm, he && styles.segTextOn]}>עב</Text>
       </View>
     </Pressable>
@@ -45,7 +46,9 @@ const styles = StyleSheet.create({
   },
   pressed: { transform: [{ translateY: 2 }], shadowOpacity: 0 },
   globe: { fontSize: 16, marginHorizontal: 2 },
+  separator: { fontFamily: fonts.bold, fontSize: 11, color: colors.night },
   seg: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 12 },
+  segCompact: { paddingHorizontal: 3 },
   segOn: { backgroundColor: colors.purple },
   segText: { fontFamily: fonts.bold, fontSize: 14, color: colors.night },
   segTextSm: { fontSize: 12 },

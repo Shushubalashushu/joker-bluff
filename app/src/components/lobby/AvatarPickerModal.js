@@ -4,9 +4,11 @@ import Animated, { ZoomIn } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Avatar from '../common/Avatar';
 import { AVATARS } from '../../constants/avatars';
+import { useI18n } from '../../i18n';
 import { colors, fonts, cartoonShadow } from '../../theme';
 
 export default function AvatarPickerModal({ visible, selectedId, onSelect, onClose }) {
+  const { t, textStyle } = useI18n();
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <SafeAreaProvider>
@@ -15,7 +17,7 @@ export default function AvatarPickerModal({ visible, selectedId, onSelect, onClo
         <Animated.View entering={ZoomIn.springify().damping(14)} style={styles.sheet}>
           {/* Inner Pressable swallows taps so they don't close the modal */}
           <Pressable>
-            <Text style={styles.title}>Pick your buddy!</Text>
+            <Text style={[styles.title, textStyle]}>{t('avatar.title')}</Text>
             <View style={styles.grid}>
               {AVATARS.map((a) => {
                 const selected = a.id === selectedId;
@@ -26,7 +28,7 @@ export default function AvatarPickerModal({ visible, selectedId, onSelect, onClo
                       onSelect(a.id);
                       onClose();
                     }}
-                    accessibilityLabel={`Avatar ${a.emoji}`}
+                    accessibilityLabel={t('avatar.choice', { emoji: a.emoji })}
                     style={[styles.cell, selected && styles.cellSelected]}
                   >
                     <Avatar avatarId={a.id} size={64} ring={selected ? colors.yellow : colors.night} />

@@ -21,13 +21,14 @@ export function describeEvent(e, nameOf, myId, t = fallbackT) {
     case 'offer_rejected':
       return e.nextIsForced ? t('event.offerRejectedNextForced') : t('event.offerRejected', { who: who(e.playerId), n: e.offerNumber });
     case 'card_transferred':
+      if (e.verifiedNoCard) return t(e.forced ? 'event.transferForcedVerified' : 'event.transferVerified', { who: who(e.toId), rank: e.verifiedRank });
       return e.forced ? t('event.transferForced', { who: who(e.toId) }) : t('event.transfer', { who: who(e.toId), n: e.offerNumber });
     case 'timeout':
       return t('event.timeout', { who: who(e.playerId) });
     case 'game_over':
       return t('event.gameOver', { who: who(e.winnerId), rank: e.winningRank });
     case 'lie_deye_used':
-      return e.targetId === myId ? t('event.lieDeyeOnYou', { who: who(e.playerId) }) : t('event.lieDeyeUsed', { who: who(e.playerId) });
+      return e.targetId === myId ? t('event.lieDeyeOnYou', { who: who(e.playerId) }) : t('event.lieDeyeUsed', { who: who(e.playerId), seconds: Math.ceil(e.durationMs / 1000) });
     case 'lie_deye_bonus':
       return t('event.lieDeyeBonus', { who: who(e.playerId), amount: e.amount, balance: e.balance });
     case 'game_aborted':
@@ -42,6 +43,8 @@ export function describeAbort(e, nameOf, myId, t = fallbackT) {
   if (!e) return null;
   const name = e.playerId === myId ? t('common.you') : e.nickname || (nameOf ? nameOf(e.playerId) : t('common.aPlayer'));
   switch (e.reason) {
+    case 'server_error':
+      return t('abort.serverError');
     case 'host_ended':
       return t('abort.hostEnded', { name });
     case 'player_disconnected':

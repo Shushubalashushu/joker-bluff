@@ -7,6 +7,8 @@ import PlayfulBackground from '../components/common/PlayfulBackground';
 import CartoonButton from '../components/common/CartoonButton';
 import Avatar from '../components/common/Avatar';
 import { AUDIO_TOGGLE_SIZE } from '../components/AudioToggle';
+import LanguageToggle from '../components/LanguageToggle';
+import { useI18n } from '../i18n';
 import { useGame } from '../context/GameContext';
 import useResponsive from '../hooks/useResponsive';
 import { describeAbort } from '../utils/describeEvent';
@@ -18,6 +20,7 @@ const DISABLED_GRADIENT = ['#C9C3D9', '#A59DBB'];
 const DISABLED_LIP = '#7E7696';
 
 function PlayerTile({ player, isMe, avatarSize }) {
+  const { t, textStyle } = useI18n();
   return (
     <Animated.View entering={ZoomIn.springify()} style={[styles.tile, isMe && styles.tileMe]}>
       {player.isHost && <Text style={styles.crown}>👑</Text>}
@@ -25,9 +28,9 @@ function PlayerTile({ player, isMe, avatarSize }) {
       <Text style={styles.tileName} numberOfLines={1}>
         {player.nickname}
       </Text>
-      <Text style={styles.tileSub}>{isMe ? 'You' : player.connected ? 'Ready' : 'Offline…'}</Text>
+      <Text style={[styles.tileSub, textStyle]}>{t(isMe ? 'common.you' : player.connected ? 'waiting.ready' : 'waiting.offline')}</Text>
       {typeof player.tokens === 'number' && (
-        <View style={styles.tokenPill} accessibilityLabel={`${player.tokens} Lie Deye tokens`}>
+        <View style={styles.tokenPill} accessibilityLabel={t('ld.a11yTokens', { count: player.tokens })}>
           <Text style={styles.tokenText}>👁️ {player.tokens}</Text>
         </View>
       )}
@@ -36,21 +39,23 @@ function PlayerTile({ player, isMe, avatarSize }) {
 }
 
 function EmptyTile({ height }) {
+  const { t, textStyle } = useI18n();
   return (
     <View style={[styles.tile, styles.tileEmpty, { minHeight: height }]}>
       <Ionicons name="person-add" size={26} color="rgba(255,255,255,0.7)" />
-      <Text style={styles.emptyText}>Waiting…</Text>
+      <Text style={[styles.emptyText, textStyle]}>{t('waiting.waiting')}</Text>
     </View>
   );
 }
 
 /** "Bob left — the match was ended." Shown after a match is aborted (player left / disconnected / host ended). */
 function AbortBanner({ notice, playerId, onClose }) {
+  const { t, alignStart } = useI18n();
   if (!notice) return null;
   return (
     <Animated.View entering={FadeInDown.springify()} exiting={FadeOutUp} style={styles.banner}>
-      <Text style={styles.bannerText}>{describeAbort(notice, null, playerId)}</Text>
-      <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="Dismiss">
+      <Text style={[styles.bannerText, alignStart]}>{describeAbort(notice, null, playerId, t)}</Text>
+      <Pressable onPress={onClose} hitSlop={10} accessibilityLabel={t('common.dismiss')}>
         <Ionicons name="close-circle" size={22} color={colors.night} />
       </Pressable>
     </Animated.View>
@@ -58,8 +63,9 @@ function AbortBanner({ notice, playerId, onClose }) {
 }
 
 export default function WaitingRoomScreen() {
-  const { room, playerId, startGame, leaveRoom, notice, clearNotice } = useGame();
+  const { room, playerId, connection, startGame, leaveRoom, notice, clearNotice } = useGame();
   const r = useResponsive();
+  const { t, tError, textStyle } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -67,21 +73,28 @@ export default function WaitingRoomScreen() {
   const players = room.players;
   const n = players.length;
   const minPlayers = Math.max(MIN_PLAYERS, room.minPlayers ?? MIN_PLAYERS);
-  const canStart = n >= minPlayers;
+  const allConnected = players.every((p) => p.connected);
+  const canStart = n >= minPlayers && allConnected;
   const missing = Math.max(0, minPlayers - n);
+  const statusLabel = t(canStart ? 'waiting.readyStatus' : missing ? 'waiting.missingStatus' : 'waiting.reconnectStatus', { count: missing });
   const economy = room.lieDeye || LIE_DEYE;
   const avatarSize = r.compact ? 46 : r.tall ? 62 : 54;
   const codeTile = Math.min(50, (r.availW - 36 - 32 - 4 * 8) / 5);
 
   const share = () =>
-    Share.share({ message: `Join my Joker Bluff game! 🃏 Room code: ${room.code}` }).catch(() => {});
+    Share.share({ message: t('waiting.shareMessage', { code: room.code }) }).catch(() => {});
 
   const onStart = async () => {
     setBusy(true);
     setError(null);
     const res = await startGame();
     setBusy(false);
-    if (!res.ok) setError(res.error);
+    if (!res.ok) setError(res);
+  };
+
+  const onLeave = async () => {
+    const res = await leaveRoom();
+    if (!res.ok) setError(res);
   };
 
   return (
@@ -89,19 +102,20 @@ export default function WaitingRoomScreen() {
       <PlayfulBackground colors={gradients.waiting} />
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable onPress={leaveRoom} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Leave lobby">
+          <Pressable onPress={onLeave} style={styles.iconBtn} hitSlop={8} accessibilityLabel={t('waiting.leave')}>
             <Ionicons name="arrow-back" size={24} color={colors.night} />
           </Pressable>
-          <Text style={[styles.headerTitle, r.compact && { fontSize: 20 }]}>Private Lobby</Text>
+          <Text style={[styles.headerTitle, r.compact && { fontSize: 20 }, textStyle]} adjustsFontSizeToFit numberOfLines={1}>{t('waiting.title')}</Text>
+          <LanguageToggle compact />
           <View style={{ width: AUDIO_TOGGLE_SIZE }} />
         </View>
 
         <AbortBanner notice={notice} playerId={playerId} onClose={clearNotice} />
 
-        <ScrollView contentContainerStyle={[styles.content, r.compact && { gap: 10, padding: 14 }]}>
+        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={[styles.content, r.compact && { gap: 10, padding: 14 }]}>
           {/* Room code */}
           <Animated.View entering={FadeIn} style={styles.codeCard}>
-            <Text style={styles.codeLabel}>ROOM CODE</Text>
+            <Text style={[styles.codeLabel, textStyle]}>{t('waiting.roomCode')}</Text>
             <View style={styles.codeRow}>
               {room.code.split('').map((ch, i) => (
                 <View
@@ -115,25 +129,24 @@ export default function WaitingRoomScreen() {
                 </View>
               ))}
             </View>
-            <Pressable onPress={share} style={styles.shareBtn} accessibilityLabel="Share room code">
+            <Pressable onPress={share} style={styles.shareBtn} accessibilityLabel={t('waiting.share')}>
               <Ionicons name="share-social" size={18} color={colors.white} />
-              <Text style={styles.shareText}>Invite friends</Text>
+              <Text style={[styles.shareText, textStyle]}>{t('waiting.invite')}</Text>
             </Pressable>
           </Animated.View>
 
           {/* Dynamic deck preview */}
           <View style={styles.deckPill}>
-            <Text style={styles.deckText}>
-              {n} players → {n} ranks × 4 + 🃏 = <Text style={styles.deckStrong}>{n * 4 + 1} cards</Text>
+            <Text style={[styles.deckText, textStyle]}>
+              {t('waiting.deck', { count: n, cards: n * 4 + 1 })}
             </Text>
           </View>
 
           {/* Lie Deye economy reminder */}
           <View style={styles.ldInfo}>
             <Text style={styles.ldTitle}>👁️ Lie Deye</Text>
-            <Text style={styles.ldText}>
-              Start with {economy.STARTING_TOKENS} · unused tokens carry over · winner +{economy.WIN_BONUS} · max{' '}
-              {economy.MAX_USES_PER_GAME} uses per game
+            <Text style={[styles.ldText, textStyle]}>
+              {t('waiting.economy', { start: economy.STARTING_TOKENS, bonus: economy.WIN_BONUS, max: economy.MAX_USES_PER_GAME })}
             </Text>
           </View>
 
@@ -149,30 +162,29 @@ export default function WaitingRoomScreen() {
         </ScrollView>
 
         <View style={styles.footer}>
-          {!!error && <Text style={styles.error}>⚠️ {error}</Text>}
+          {!!error && <Text style={[styles.error, textStyle]}>⚠️ {tError(error)}</Text>}
           {/* Player-count indicator (everyone sees it) */}
           <View style={[styles.countPill, canStart && styles.countPillReady]}>
-            <Text style={[styles.countText, canStart && styles.countTextReady]}>
-              👥 {n}/{minPlayers} players{' '}
-              {canStart ? '· ready to start!' : `· waiting for ${missing} more`}
+            <Text style={[styles.countText, canStart && styles.countTextReady, textStyle]}>
+              {t('waiting.playerCount', { count: n, min: minPlayers, status: statusLabel })}
             </Text>
           </View>
           {isHost ? (
             <CartoonButton
-              title={canStart ? 'Start Game!' : `Waiting for ${missing} more player${missing === 1 ? '' : 's'}`}
+              title={t(canStart ? 'waiting.start' : missing ? 'waiting.missing' : 'waiting.reconnect', { count: missing })}
               size={r.compact ? 'md' : 'lg'}
               gradient={canStart ? gradients.success : DISABLED_GRADIENT}
               lipColor={canStart ? colors.darkGreen : DISABLED_LIP}
               icon={<Text style={{ fontSize: canStart ? 26 : 20 }}>{canStart ? '🚀' : '⏳'}</Text>}
               textStyle={!canStart && { fontSize: r.compact ? 15 : 17 }}
-              disabled={!canStart}
+              disabled={!canStart || connection !== 'online'}
               loading={busy}
               onPress={onStart}
             />
           ) : (
             <View style={[styles.waitBox, r.compact && { paddingVertical: 14 }]}>
-              <Text style={styles.waitText}>
-                {canStart ? 'Waiting for the host to start…' : `Need ${missing} more player${missing === 1 ? '' : 's'} to start…`}
+              <Text style={[styles.waitText, textStyle]}>
+                {t(canStart ? 'waiting.host' : missing ? 'waiting.more' : 'waiting.reconnect', { count: missing })}
               </Text>
             </View>
           )}
@@ -186,7 +198,7 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 4 },
-  headerTitle: { fontFamily: fonts.bold, fontSize: 24, color: colors.white, textShadowColor: colors.night, textShadowOffset: { width: 2, height: 2 }, textShadowRadius: 0 },
+  headerTitle: { flexShrink: 1, fontFamily: fonts.bold, fontSize: 24, color: colors.white, textShadowColor: colors.night, textShadowOffset: { width: 2, height: 2 }, textShadowRadius: 0 },
   iconBtn: {
     width: AUDIO_TOGGLE_SIZE,
     height: AUDIO_TOGGLE_SIZE,
@@ -255,7 +267,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   deckText: { fontFamily: fonts.semibold, color: colors.white, fontSize: 14 },
-  deckStrong: { fontFamily: fonts.bold, color: colors.yellow },
   ldInfo: {
     backgroundColor: 'rgba(43,27,74,0.75)',
     borderRadius: 18,

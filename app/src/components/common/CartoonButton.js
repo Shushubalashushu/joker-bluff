@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { colors, fonts, gradients } from '../../theme';
+import { useI18n } from '../../i18n';
 
 const SIZES = {
   sm: { height: 44, font: 16, depth: 4, radius: 14, padX: 14 },
@@ -27,6 +28,7 @@ export default function CartoonButton({
   textStyle,
   accessibilityLabel,
 }) {
+  const { textStyle: languageStyle } = useI18n();
   const s = SIZES[size] || SIZES.md;
   const pressed = useSharedValue(0);
 
@@ -66,7 +68,7 @@ export default function CartoonButton({
             ) : (
               <>
                 {icon}
-                {!!title && <Text style={[styles.text, { fontSize: s.font }, textStyle]}>{title}</Text>}
+                {!!title && <Text style={[styles.text, { fontSize: s.font }, textStyle, languageStyle]} adjustsFontSizeToFit numberOfLines={2}>{title}</Text>}
               </>
             )}
           </LinearGradient>
@@ -97,6 +99,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.28)',
   },
   text: {
+    flexShrink: 1,
+    textAlign: 'center',
     fontFamily: fonts.bold,
     color: colors.white,
     textShadowColor: 'rgba(43,27,74,0.45)',

@@ -59,26 +59,9 @@ export function destroySocket() {
   socket = null;
 }
 
-/** Resolves true once connected (or false after `ms`). Smooths over brief reconnects. */
-function waitForConnection(ms) {
-  if (!socket) return Promise.resolve(false);
-  if (socket.connected) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const done = (ok) => {
-      clearTimeout(timer);
-      socket?.off('connect', onConnect);
-      resolve(ok);
-    };
-    const onConnect = () => done(true);
-    const timer = setTimeout(() => done(false), ms);
-    socket.on('connect', onConnect);
-  });
-}
-
 /** Emit with ack. Always resolves to `{ ok, ... }` - never throws. */
 export async function emitAck(event, payload = {}, timeoutMs = 6000) {
-  if (!socket) return { ok: false, code: 'OFFLINE', error: 'Not connected to the server' };
-  if (!socket.connected && !(await waitForConnection(5000))) {
+  if (!socket?.connected) {
     const why = lastConnectError ? ` (${lastConnectError})` : '';
     return { ok: false, code: 'OFFLINE', error: `Not connected to the server${why}` };
   }
@@ -94,8 +77,11 @@ export async function emitAck(event, payload = {}, timeoutMs = 6000) {
  * offset = serverTime - localTime, so `Date.now() + offset` ≈ server clock.
  */
 export async function measureClockOffset(samples = 5) {
+  const connection = socket;
+  const socketId = connection?.id;
   let best = null;
   for (let i = 0; i < samples; i++) {
+    if (!socketId || socket !== connection || connection.id !== socketId) break;
     const t0 = Date.now();
     const res = await emitAck('time_sync', {}, 3000);
     const t1 = Date.now();

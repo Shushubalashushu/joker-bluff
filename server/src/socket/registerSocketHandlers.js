@@ -3,15 +3,40 @@
 const config = require('../config');
 const { C2S, S2C } = require('../shared/events');
 const { GameError } = require('../game/JokerBluffGame');
-const { sanitizeNickname, sanitizeAvatarId, sanitizeRoomCode } = require('../utils/sanitize');
+const { MAX_INPUT_SAMPLES } = require('../game/telemetry');
+const { sanitizeNickname, isAvatarId, sanitizeRoomCode } = require('../utils/sanitize');
+const { createRateLimiter } = require('../utils/rateLimit');
 
 // (No `declare_win`: victory is automatic, see JokerBluffGame#_checkAutoWin.)
 const GAME_ACTIONS = [C2S.REQUEST_CARD, C2S.OFFER_CARD, C2S.PLAYER_DECISION, C2S.USE_LIE_DEYE];
 
-function applyProfile(session, payload = {}) {
-  if (payload.nickname !== undefined) session.nickname = sanitizeNickname(payload.nickname);
-  if (payload.avatarId !== undefined) session.avatarId = sanitizeAvatarId(payload.avatarId);
-  if (!session.nickname) session.nickname = sanitizeNickname('');
+const CARD_ID = /^c_[0-9a-f]{12}$/;
+const SESSION_TOKEN = /^[A-Za-z0-9_-]{32}$/;
+const isObject = (value) => value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+
+function readProfile(payload) {
+  const profile = {};
+  if (payload.nickname !== undefined) {
+    if (typeof payload.nickname !== 'string' || payload.nickname.length > 128) {
+      throw new GameError('BAD_PAYLOAD', 'Invalid nickname');
+    }
+    profile.nickname = sanitizeNickname(payload.nickname);
+  }
+  if (payload.avatarId !== undefined) {
+    if (!isAvatarId(payload.avatarId)) throw new GameError('BAD_PAYLOAD', 'Invalid avatar');
+    profile.avatarId = payload.avatarId;
+  }
+  return profile;
+}
+
+function validateOffer({ cardId, touches, noCard }) {
+  if (typeof cardId !== 'string' || !CARD_ID.test(cardId)) throw new GameError('BAD_CARD', 'Invalid card');
+  if (touches !== undefined && (!Array.isArray(touches) || touches.length > MAX_INPUT_SAMPLES)) {
+    throw new GameError('BAD_PAYLOAD', 'Invalid touch samples');
+  }
+  if (noCard !== undefined && typeof noCard !== 'boolean') {
+    throw new GameError('BAD_PAYLOAD', 'Invalid bluff claim');
+  }
 }
 
 /**
@@ -19,13 +44,29 @@ function applyProfile(session, payload = {}) {
  * Every client->server event uses an ack callback: `{ ok: true, ...data }` or `{ ok: false, code, error }`.
  */
 function registerSocketHandlers(io, { sessions, rooms }) {
+  const allowJoinFromAddress = createRateLimiter({ windowMs: 60000, maxAttempts: 120 });
+  const allowJoinForGuest = createRateLimiter({ windowMs: 60000, maxAttempts: 16 });
+
   // ---- Guest "login": resume by secret token or mint a new guest session.
   io.use((socket, next) => {
-    const auth = socket.handshake.auth || {};
-    const session = sessions.getByToken(auth.token) || sessions.create();
-    applyProfile(session, auth);
-    socket.data.session = session;
-    next();
+    try {
+      const auth = socket.handshake.auth ?? {};
+      if (!isObject(auth) || (auth.token != null && (typeof auth.token !== 'string' || !SESSION_TOKEN.test(auth.token)))) {
+        throw new GameError('BAD_PAYLOAD', 'Invalid guest session');
+      }
+      const profile = readProfile(auth);
+      const session = sessions.getByToken(auth.token) || sessions.create();
+      if (!session) throw new GameError('SERVER_BUSY', 'Server is busy, try again');
+      Object.assign(session, profile);
+      if (!session.nickname) session.nickname = sanitizeNickname('');
+      socket.data.session = session;
+    } catch (err) {
+      if (!(err instanceof GameError)) console.error('Guest handshake failed', err);
+      const error = new Error(err instanceof GameError ? err.message : 'Could not connect');
+      error.data = { code: err instanceof GameError ? err.code : 'INTERNAL' };
+      return next(error);
+    }
+    return next();
   });
 
   io.on('connection', (socket) => {
@@ -66,25 +107,27 @@ function registerSocketHandlers(io, { sessions, rooms }) {
       next();
     });
 
-    const currentRoom = () => {
+    const currentRoom = (lifecycleId) => {
       const room = session.roomCode && rooms.get(session.roomCode);
-      if (!room) throw new GameError('NO_ROOM', 'You are not in a lobby');
+      if (!room?.hasPlayer(session.playerId)) throw new GameError('NO_ROOM', 'You are not in a lobby');
+      if (lifecycleId !== undefined) room.assertLifecycle(lifecycleId);
       return room;
     };
 
     const on = (event, handler) => {
-      socket.on(event, (payload, ack) => {
-        if (typeof payload === 'function') {
-          ack = payload;
-          payload = {};
-        }
-        const reply = typeof ack === 'function' ? ack : () => {};
+      socket.on(event, (...args) => {
+        const reply = typeof args[args.length - 1] === 'function' ? args.pop() : () => {};
+        const [payload] = args;
         try {
-          const data = handler(payload && typeof payload === 'object' ? payload : {}) || {};
+          if (session.socketId !== socket.id) throw new GameError('STALE_ACTION', 'This guest connection was replaced');
+          if (args.length > 1 || (payload !== undefined && !isObject(payload))) {
+            throw new GameError('BAD_PAYLOAD', 'Expected one payload object');
+          }
+          const data = handler(payload ?? {}) || {};
           reply({ ok: true, ...data });
         } catch (err) {
           if (err instanceof GameError) {
-            reply({ ok: false, code: err.code, error: err.message });
+            reply({ ok: false, code: err.code, error: err.message, params: err.params });
           } else {
             console.error(`[socket ${socket.id}] ${event} failed`, err);
             reply({ ok: false, code: 'INTERNAL', error: 'Something went wrong' });
@@ -96,48 +139,59 @@ function registerSocketHandlers(io, { sessions, rooms }) {
     on(C2S.TIME_SYNC, () => ({ serverNow: Date.now() }));
 
     on(C2S.UPDATE_PROFILE, (p) => {
-      applyProfile(session, p);
+      Object.assign(session, readProfile(p));
       if (session.roomCode) rooms.get(session.roomCode)?.updateProfile(session);
       return { nickname: session.nickname, avatarId: session.avatarId };
     });
 
     on(C2S.CREATE_ROOM, (p) => {
-      applyProfile(session, p);
-      const room = rooms.createRoom(session);
+      const room = rooms.createRoom(session, readProfile(p));
       return { code: room.code };
     });
 
     on(C2S.JOIN_ROOM, (p) => {
-      applyProfile(session, p);
+      if (!allowJoinForGuest(session.playerId) || !allowJoinFromAddress(socket.handshake.address)) {
+        throw new GameError('RATE_LIMITED', 'Too many join attempts. Try again shortly');
+      }
       const code = sanitizeRoomCode(p.code);
-      if (code.length !== config.ROOM_CODE_LENGTH) throw new GameError('BAD_CODE', 'Room codes are 5 characters');
-      rooms.joinRoom(session, code);
+      if (!code) throw new GameError('BAD_CODE', 'Enter a valid 5-character room code');
+      rooms.joinRoom(session, code, readProfile(p));
       return { code };
     });
 
-    on(C2S.LEAVE_ROOM, () => {
+    on(C2S.LEAVE_ROOM, (p) => {
+      if (currentRoom().code !== p.code) throw new GameError('STALE_ACTION', 'The lobby has changed');
       rooms.leaveRoom(session);
     });
 
-    on(C2S.START_GAME, () => {
-      currentRoom().startGame(session.playerId);
+    on(C2S.START_GAME, (p) => {
+      currentRoom(p.lifecycleId ?? null).startGame(session.playerId);
     });
 
-    on(C2S.PLAY_AGAIN, () => {
-      currentRoom().startGame(session.playerId);
+    on(C2S.PLAY_AGAIN, (p) => {
+      currentRoom(p.lifecycleId ?? null).startGame(session.playerId, { rematch: true });
     });
 
-    on(C2S.END_GAME, () => {
-      currentRoom().endGame(session.playerId);
+    on(C2S.END_GAME, (p) => {
+      currentRoom(p.lifecycleId ?? null).endGame(session.playerId);
     });
 
     // Private, available any time during a match (not subject to the phase deadline).
-    // Payload: { order?: string[] } -> ack { ok, order }
-    on(C2S.SHUFFLE_HAND, (p) => ({ order: currentRoom().shuffleHand(session.playerId, p.order) }));
+    on(C2S.SHUFFLE_HAND, (p) => {
+      const room = currentRoom(p.matchId ?? null);
+      const { order } = p;
+      if (order !== undefined && (!Array.isArray(order) || order.length > 5 || !order.every((id) => typeof id === 'string' && CARD_ID.test(id)))) {
+        throw new GameError('BAD_PAYLOAD', 'Invalid shuffle order');
+      }
+      return { order: room.shuffleHand(session.playerId, order) };
+    });
 
     for (const event of GAME_ACTIONS) {
       on(event, (p) => {
-        currentRoom().act(session.playerId, event, p);
+        const room = currentRoom(p.matchId ?? null);
+        room.assertStep(p.step);
+        if (event === C2S.OFFER_CARD) validateOffer(p);
+        room.act(session.playerId, event, p);
       });
     }
 

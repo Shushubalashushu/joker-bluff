@@ -48,8 +48,8 @@ function sanitizeTouches(raw, { handSize, maxT, slotOf = new Map() }) {
     const y = num(p.y, 0, 1);
     if (x === null || y === null) continue;
     let s = null;
-    if (typeof p.c === 'string' && slotOf.has(p.c)) s = slotOf.get(p.c);
-    else if (Number.isInteger(p.s) && p.s >= 0 && p.s < handSize) s = p.s;
+    if (typeof p.c === 'string') s = slotOf.get(p.c) ?? null;
+    else if (p.c === undefined && Number.isInteger(p.s) && p.s >= 0 && p.s < handSize) s = p.s;
     out.push({
       s,
       u: s === null ? null : round3(num(p.u, 0, 1) ?? 0.5),
@@ -63,4 +63,4 @@ function sanitizeTouches(raw, { handSize, maxT, slotOf = new Map() }) {
   return downsample(out, MAX_KEPT_SAMPLES);
 }
 
-module.exports = { sanitizeTouches, MAX_KEPT_SAMPLES };
+module.exports = { sanitizeTouches, MAX_INPUT_SAMPLES, MAX_KEPT_SAMPLES };

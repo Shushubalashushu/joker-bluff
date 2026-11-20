@@ -6,6 +6,7 @@ import Avatar from '../common/Avatar';
 import CartoonButton from '../common/CartoonButton';
 import PlayingCard from './PlayingCard';
 import { LIE_DEYE } from '../../config';
+import { useI18n } from '../../i18n';
 import { colors, fonts, gradients, cartoonShadow } from '../../theme';
 
 /**
@@ -14,8 +15,10 @@ import { colors, fonts, gradients, cartoonShadow } from '../../theme';
  * Wrapped in its own SafeAreaProvider: RN Modals render in a separate native
  * window, so they don't inherit the app's safe-area context.
  */
-export default function GameOverModal({ visible, result, players, seats = [], myId, isHost, onPlayAgain, onEndGame, onLeave }) {
+export default function GameOverModal({ visible, result, lastTransfer, economy = LIE_DEYE, players, seats = [], myId, isHost, onPlayAgain, onEndGame, onLeave }) {
+  const { t, tError, textStyle } = useI18n();
   const [busy, setBusy] = useState(null);
+  const [error, setError] = useState(null);
   if (!result) return null;
 
   const byId = Object.fromEntries(players.map((p) => [p.id, p]));
@@ -27,7 +30,9 @@ export default function GameOverModal({ visible, result, players, seats = [], my
 
   const run = (key, fn) => async () => {
     setBusy(key);
-    await fn();
+    setError(null);
+    const res = await fn();
+    if (!res.ok) setError(res);
     setBusy(null);
   };
 
@@ -37,18 +42,21 @@ export default function GameOverModal({ visible, result, players, seats = [], my
         <SafeAreaView style={styles.backdrop} edges={['top', 'bottom', 'left', 'right']}>
           <Animated.View entering={BounceIn.duration(700)} style={styles.card}>
             <Text style={styles.confetti}>🎉 ✨ 🎊</Text>
-            <Text style={styles.headline}>{iWon ? 'You win!' : iLost ? 'Stuck with the Joker!' : 'Round over!'}</Text>
+            <Text style={[styles.headline, textStyle]}>{t(iWon ? 'results.win' : iLost ? 'results.loss' : 'results.over')}</Text>
+            {lastTransfer?.verifiedNoCard && (
+              <Text style={[styles.verified, textStyle]}>{t('table.verifiedTransfer', { rank: lastTransfer.verifiedRank })}</Text>
+            )}
 
             <View style={styles.podium}>
               <View style={styles.podiumCol}>
                 <Text style={styles.medal}>🏆</Text>
                 <Avatar avatarId={winner?.avatarId ?? 0} size={72} ring={colors.gold} />
                 <Text style={styles.podiumName} numberOfLines={1}>
-                  {winner?.nickname ?? 'A player'}
+                  {winner?.nickname ?? t('common.aPlayer')}
                 </Text>
-                <Text style={styles.podiumSub}>Four {result.winningRank}s</Text>
+                <Text style={[styles.podiumSub, textStyle]}>{t('results.quad', { rank: result.winningRank })}</Text>
                 <Animated.View entering={ZoomIn.delay(700)} style={styles.bonus}>
-                  <Text style={styles.bonusText}>+{LIE_DEYE.WIN_BONUS} 👁️ Lie Deye</Text>
+                  <Text style={[styles.bonusText, textStyle]}>{t('results.bonus', { amount: economy.WIN_BONUS })}</Text>
                 </Animated.View>
               </View>
               {loser && (
@@ -58,17 +66,17 @@ export default function GameOverModal({ visible, result, players, seats = [], my
                   <Text style={styles.podiumName} numberOfLines={1}>
                     {loser.nickname}
                   </Text>
-                  <Text style={[styles.podiumSub, { color: colors.red }]}>Held the Joker</Text>
+                  <Text style={[styles.podiumSub, { color: colors.red }, textStyle]}>{t('results.joker')}</Text>
                 </View>
               )}
             </View>
 
-            <ScrollView style={styles.hands} contentContainerStyle={{ gap: 8 }}>
+            <ScrollView bounces={false} overScrollMode="never" style={styles.hands} contentContainerStyle={{ gap: 8 }}>
               {Object.entries(result.hands).map(([pid, cards], i) => (
                 <Animated.View key={pid} entering={FadeInUp.delay(150 + i * 80)} style={styles.handRow}>
                   <View style={styles.handWho}>
                     <Text style={styles.handName} numberOfLines={1}>
-                      {pid === myId ? 'You' : byId[pid]?.nickname ?? 'Left'}
+                      {pid === myId ? t('common.you') : byId[pid]?.nickname ?? t('results.left')}
                     </Text>
                     {typeof tokensOf[pid] === 'number' && <Text style={styles.handTokens}>👁️ {tokensOf[pid]}</Text>}
                   </View>
@@ -80,15 +88,16 @@ export default function GameOverModal({ visible, result, players, seats = [], my
                 </Animated.View>
               ))}
             </ScrollView>
-            <Text style={styles.carry}>
-              Unused Lie Deye tokens carry over · max {LIE_DEYE.MAX_USES_PER_GAME} uses per game
+            <Text style={[styles.carry, textStyle]}>
+              {t('results.carry', { max: economy.MAX_USES_PER_GAME })}
             </Text>
+            {!!error && <Text style={[styles.error, textStyle]}>{tError(error)}</Text>}
 
             <View style={styles.buttons}>
               {isHost ? (
                 <>
                   <CartoonButton
-                    title="Play Again"
+                    title={t('results.again')}
                     gradient={gradients.success}
                     lipColor={colors.darkGreen}
                     icon={<Text style={{ fontSize: 22 }}>🔁</Text>}
@@ -97,7 +106,7 @@ export default function GameOverModal({ visible, result, players, seats = [], my
                     onPress={run('again', onPlayAgain)}
                   />
                   <CartoonButton
-                    title="Back to Lobby (End)"
+                    title={t('results.back')}
                     size="sm"
                     gradient={gradients.danger}
                     lipColor={colors.darkRed}
@@ -107,9 +116,17 @@ export default function GameOverModal({ visible, result, players, seats = [], my
                   />
                 </>
               ) : (
-                <Text style={styles.waitText}>Waiting for the host to start a rematch…</Text>
+                <Text style={[styles.waitText, textStyle]}>{t('results.wait')}</Text>
               )}
-              <CartoonButton title="Leave Lobby" size="sm" gradient={gradients.blue} lipColor={colors.darkBlue} onPress={onLeave} />
+              <CartoonButton
+                title={t('waiting.leave')}
+                size="sm"
+                gradient={gradients.blue}
+                lipColor={colors.darkBlue}
+                onPress={run('leave', onLeave)}
+                loading={busy === 'leave'}
+                disabled={!!busy}
+              />
             </View>
           </Animated.View>
         </SafeAreaView>
@@ -119,6 +136,8 @@ export default function GameOverModal({ visible, result, players, seats = [], my
 }
 
 const styles = StyleSheet.create({
+  error: { fontFamily: fonts.semibold, color: colors.darkRed, textAlign: 'center' },
+  verified: { fontFamily: fonts.bold, color: colors.darkBlue, textAlign: 'center' },
   backdrop: { flex: 1, backgroundColor: colors.overlay, alignItems: 'center', justifyContent: 'center', padding: 18 },
   card: {
     width: '100%',

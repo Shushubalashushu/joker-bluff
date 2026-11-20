@@ -10,6 +10,7 @@ import Animated, {
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
+import { useI18n } from '../../i18n';
 import useServerCountdown from '../../hooks/useServerCountdown';
 import { colors, fonts } from '../../theme';
 
@@ -22,6 +23,7 @@ import { colors, fonts } from '../../theme';
  * blue and shows "👁️ Time frozen" so everyone at the table knows.
  */
 export default function TimerBar({ deadline, duration, clockOffset, label, frozen = false, compact = false }) {
+  const { t, textStyle } = useI18n();
   const progress = useSharedValue(1);
   const pulse = useSharedValue(1);
   const remaining = useServerCountdown(deadline, clockOffset);
@@ -61,13 +63,13 @@ export default function TimerBar({ deadline, duration, clockOffset, label, froze
   const badge = compact ? 34 : 40;
 
   return (
-    <Animated.View style={[styles.wrap, wrapStyle]} accessibilityRole="progressbar" accessibilityLabel={`${seconds} seconds left`}>
+    <Animated.View style={[styles.wrap, wrapStyle]} accessibilityRole="progressbar" accessibilityLabel={t('timer.a11y', { s: seconds })}>
       <View style={[styles.track, { height: h, borderRadius: h / 2 }, frozen && styles.trackFrozen]}>
         <Animated.View style={[styles.fill, fillStyle]} />
         <View style={styles.shine} pointerEvents="none" />
         {!!(label || frozen) && (
-          <Text style={[styles.label, compact && { fontSize: 11 }, frozen && styles.labelFrozen]} numberOfLines={1}>
-            {frozen ? `👁️ Time frozen · ${label || ''}` : label}
+          <Text style={[styles.label, compact && { fontSize: 11 }, frozen && styles.labelFrozen, textStyle]} numberOfLines={1}>
+            {frozen ? t('timer.frozen', { label: label || '' }) : label}
           </Text>
         )}
       </View>

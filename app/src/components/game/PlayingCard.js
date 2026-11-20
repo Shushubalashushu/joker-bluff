@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useI18n } from '../../i18n';
 import { colors, fonts, gradients } from '../../theme';
 
 export const CARD_SIZES = {
@@ -33,14 +34,15 @@ function CardBack({ s }) {
 }
 
 function JokerFace({ s }) {
+  const { t, textStyle } = useI18n();
   return (
     <LinearGradient colors={gradients.joker} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={[styles.fill, styles.center]}>
       <Text style={{ fontSize: s.pip }} allowFontScaling={false}>
         🃏
       </Text>
       {s.w >= 42 && (
-        <Text style={[styles.jokerText, { fontSize: s.rank * 0.6 }]} allowFontScaling={false}>
-          JOKER
+        <Text style={[styles.jokerText, { fontSize: s.rank * 0.6 }, textStyle]} allowFontScaling={false}>
+          {t('hand.joker')}
         </Text>
       )}
     </LinearGradient>

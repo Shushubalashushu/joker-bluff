@@ -4,6 +4,7 @@ import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } 
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../common/Avatar';
 import { randomNickname } from '../../constants/avatars';
+import { useI18n } from '../../i18n';
 import { NICKNAME_MAX } from '../../config';
 import { colors, fonts, cartoonShadow } from '../../theme';
 
@@ -11,7 +12,8 @@ import { colors, fonts, cartoonShadow } from '../../theme';
  * Guest profile card: cartoon avatar with an Edit badge + nickname input.
  * Exposes `shake()` via ref so the parent can nudge the user (e.g. empty name).
  */
-const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChangeNickname, onEditAvatar, error }, ref) {
+const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChangeNickname, onEditAvatar, inputRef, error }, ref) {
+  const { t, textStyle, alignStart } = useI18n();
   const shakeX = useSharedValue(0);
   const shakeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: shakeX.value }] }));
 
@@ -30,11 +32,11 @@ const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChan
   return (
     <Animated.View style={[styles.card, shakeStyle]}>
       <View style={styles.ribbon}>
-        <Text style={styles.ribbonText}>YOUR PROFILE</Text>
+        <Text style={[styles.ribbonText, textStyle]}>{t('profile.title')}</Text>
       </View>
 
       <View style={styles.row}>
-        <Pressable onPress={onEditAvatar} accessibilityLabel="Change avatar" style={styles.avatarWrap}>
+        <Pressable onPress={onEditAvatar} accessibilityLabel={t('profile.avatar')} style={styles.avatarWrap}>
           <Avatar avatarId={avatarId} size={92} />
           <View style={styles.editBadge}>
             <Ionicons name="pencil" size={16} color={colors.night} />
@@ -42,31 +44,32 @@ const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChan
         </Pressable>
 
         <View style={styles.fields}>
-          <Text style={styles.label}>Nickname</Text>
+          <Text style={[styles.label, alignStart]}>{t('profile.nickname')}</Text>
           <View style={[styles.inputRow, error && styles.inputError]}>
             <TextInput
+              ref={inputRef}
               value={nickname}
               onChangeText={onChangeNickname}
-              placeholder="Guest name"
+              placeholder={t('profile.placeholder')}
               placeholderTextColor={colors.muted}
               maxLength={NICKNAME_MAX}
               autoCorrect={false}
               autoCapitalize="words"
               returnKeyType="done"
-              style={styles.input}
-              accessibilityLabel="Nickname"
+              style={[styles.input, alignStart]}
+              accessibilityLabel={t('profile.nickname')}
             />
             <Pressable
               onPress={() => onChangeNickname(randomNickname())}
               hitSlop={8}
-              accessibilityLabel="Random nickname"
+              accessibilityLabel={t('profile.random')}
               style={styles.dice}
             >
               <Text style={styles.diceText}>🎲</Text>
             </Pressable>
           </View>
-          <Text style={[styles.hint, error && { color: colors.red }]}>
-            {error || 'Guest login · no account needed'}
+          <Text style={[styles.hint, alignStart, error && { color: colors.red }]}>
+            {error || t('profile.hint')}
           </Text>
         </View>
       </View>

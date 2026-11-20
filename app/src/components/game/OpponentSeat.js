@@ -10,6 +10,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../common/Avatar';
+import { useI18n } from '../../i18n';
 import { colors, fonts } from '../../theme';
 
 /**
@@ -20,6 +21,8 @@ import { colors, fonts } from '../../theme';
  *  - 👁️ chip:   their Lie Deye token balance
  */
 export default function OpponentSeat({ player, seat, spotlight, muted, acting, role, compact = false, size: sizeProp }) {
+  const { t, textStyle } = useI18n();
+  const playerName = player?.nickname ?? t('common.aPlayer');
   const size = sizeProp || (compact ? 46 : 54);
   const pulse = useSharedValue(0);
 
@@ -40,7 +43,7 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
   const connected = player?.connected !== false;
 
   return (
-    <View style={[styles.wrap, muted && styles.mutedWrap]} accessibilityLabel={`${player?.nickname}${muted ? ', muted' : ''}`}>
+    <View style={[styles.wrap, muted && styles.mutedWrap]} accessibilityLabel={muted ? t('seat.a11yMuted', { name: playerName }) : playerName}>
       <View style={{ width: size + 14, height: size + 14, alignItems: 'center', justifyContent: 'center' }}>
         {spotlight && (
           <Animated.View
@@ -83,15 +86,15 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
         </View>
       </View>
 
-      <Text style={[styles.name, spotlight && styles.nameSpot]} numberOfLines={1}>
-        {player?.nickname ?? '???'}
+      <Text style={[styles.name, spotlight && styles.nameSpot, textStyle]} numberOfLines={1}>
+        {playerName}
       </Text>
       {!!role && (
         <View style={[styles.role, role === 'GIVER' ? styles.roleGiver : styles.roleAsker]}>
-          <Text style={styles.roleText}>{role}</Text>
+          <Text style={[styles.roleText, textStyle]}>{t(`role.${role}`)}</Text>
         </View>
       )}
-      {muted && <Text style={styles.mutedText}>MUTED</Text>}
+      {muted && <Text style={[styles.mutedText, textStyle]}>{t('role.muted')}</Text>}
     </View>
   );
 }

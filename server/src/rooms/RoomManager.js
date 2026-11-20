@@ -6,8 +6,7 @@ const { S2C } = require('../shared/events');
 const { GameError } = require('../game/JokerBluffGame');
 const { Room } = require('./Room');
 
-// No 0/O/1/I/L - codes get read out loud between friends.
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CODE_ALPHABET = config.ROOM_CODE_ALPHABET;
 
 /** In-memory registry of every active private lobby. */
 class RoomManager {
@@ -34,18 +33,21 @@ class RoomManager {
     throw new GameError('NO_CODES', 'Server is busy, try again');
   }
 
-  createRoom(session) {
-    this.leaveRoom(session);
+  createRoom(session, profile) {
     const room = new Room({ code: this._generateCode(), sessions: this.sessions, transport: this.transport });
+    this.leaveRoom(session);
+    Object.assign(session, profile);
     this.rooms.set(room.code, room);
     this._seat(session, room);
     return room;
   }
 
-  joinRoom(session, code) {
+  joinRoom(session, code, profile) {
     const room = this.get(code);
     if (!room) throw new GameError('ROOM_NOT_FOUND', 'No lobby with that code');
+    room.assertCanSeat(session.playerId);
     if (session.roomCode && session.roomCode !== code) this.leaveRoom(session);
+    Object.assign(session, profile);
     this._seat(session, room);
     return room;
   }
@@ -84,6 +86,8 @@ class RoomManager {
         }
         this._delete(room);
         removed++;
+      } else {
+        room.pruneTokenBank();
       }
     }
     return removed;
@@ -96,10 +100,9 @@ class RoomManager {
   }
 
   _seat(session, room) {
-    room.addPlayer(session); // throws if full / in progress
     session.roomCode = room.code;
     if (session.socketId) this.transport.joinChannel(session.socketId, room.code);
-    room.broadcast(); // re-broadcast now that the socket is in the channel
+    room.addPlayer(session);
   }
 
   _delete(room) {

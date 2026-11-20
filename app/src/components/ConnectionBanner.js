@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeInUp, FadeOutUp } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useI18n } from '../i18n';
 import { useGame } from '../context/GameContext';
 import { SERVER_URL } from '../config';
 import { colors, fonts } from '../theme';
@@ -12,6 +13,7 @@ import { colors, fonts } from '../theme';
  * last error. Tap to retry immediately instead of waiting for the backoff.
  */
 export default function ConnectionBanner() {
+  const { t, tError, textStyle } = useI18n();
   const { connection, connectError, retryConnection } = useGame();
   const insets = useSafeAreaInsets();
   if (connection === 'online') return null;
@@ -24,13 +26,13 @@ export default function ConnectionBanner() {
       style={[styles.wrap, { top: insets.top + 64 }]}
     >
       <Pressable onPress={retryConnection} style={({ pressed }) => [styles.pill, pressed && { opacity: 0.8 }]}>
-        <Text style={styles.text}>{connection === 'connecting' ? '🔌 Connecting…' : '📡 Reconnecting…'}</Text>
+        <Text style={[styles.text, textStyle]}>{t(connection === 'connecting' ? 'connection.connecting' : 'connection.reconnecting')}</Text>
         <Text style={styles.sub} numberOfLines={1}>
           {host}
         </Text>
-        {!!connectError && (
-          <Text style={styles.err} numberOfLines={2}>
-            {connectError} · tap to retry
+        {connection === 'offline' && (
+          <Text style={[styles.err, textStyle]} numberOfLines={2}>
+            {connectError && <Text>{tError(connectError)} · </Text>}{t('connection.retry')}
           </Text>
         )}
       </Pressable>

@@ -21,9 +21,11 @@ import { useAudio, SFX } from '../context/AudioContext';
 import useResponsive from '../hooks/useResponsive';
 import useKeyboardLift from '../hooks/useKeyboardLift';
 import LanguageToggle from '../components/LanguageToggle';
+import { useI18n } from '../i18n';
 import { colors, fonts, gradients } from '../theme';
 
 function Logo({ scale = 1 }) {
+  const { t, textStyle } = useI18n();
   const wobble = useSharedValue(0);
   useEffect(() => {
     wobble.value = withRepeat(
@@ -43,9 +45,9 @@ function Logo({ scale = 1 }) {
   return (
     <View style={styles.logo}>
       <Animated.Text style={[styles.logoEmoji, { fontSize: 64 * scale }, jokerStyle]}>🃏</Animated.Text>
-      <Text style={[styles.logoTop, big]}>JOKER</Text>
-      <Text style={[styles.logoBottom, big]}>BLUFF</Text>
-      <Text style={styles.tagline}>Pass the Joker. Keep a straight face.</Text>
+      <Text style={[styles.logoTop, big, textStyle]}>{t('lobby.logoTop')}</Text>
+      <Text style={[styles.logoBottom, big, textStyle]}>{t('lobby.logoBottom')}</Text>
+      <Text style={[styles.tagline, textStyle]}>{t('lobby.tagline')}</Text>
     </View>
   );
 }
@@ -54,19 +56,19 @@ export default function LobbyScreen() {
   const { nickname, avatarId, setNickname, setAvatarId } = useProfile();
   const { createRoom, joinRoom } = useGame();
   const { playSfx } = useAudio();
+  const { t, textStyle } = useI18n();
   const r = useResponsive();
   const logoScale = r.compact ? 0.78 : r.tall ? 1.08 : 0.95;
-  const { targetRef, liftStyle } = useKeyboardLift({ margin: 16 });
-
   const profileRef = useRef(null);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [privateOpen, setPrivateOpen] = useState(false);
   const [nameError, setNameError] = useState(null);
+  const { targetRef, liftStyle } = useKeyboardLift({ margin: 16, enabled: !privateOpen && !avatarOpen });
 
   const openPrivate = () => {
     Keyboard.dismiss();
     if (!nickname.trim()) {
-      setNameError('Pick a nickname first!');
+      setNameError('lobby.nameRequired');
       profileRef.current?.shake();
       return;
     }
@@ -94,24 +96,26 @@ export default function LobbyScreen() {
             </Animated.View>
 
             <Animated.View entering={FadeInDown.delay(150).springify()} style={styles.profileWrap}>
-              <View ref={targetRef} collapsable={false}>
-                <ProfileCard
-                  ref={profileRef}
-                  nickname={nickname}
-                  avatarId={avatarId}
-                  error={nameError}
-                  onChangeNickname={(t) => {
-                    setNickname(t);
-                    if (nameError) setNameError(null);
-                  }}
-                  onEditAvatar={() => setAvatarOpen(true)}
-                />
-              </View>
+              <ProfileCard
+                ref={profileRef}
+                inputRef={targetRef}
+                nickname={nickname}
+                avatarId={avatarId}
+                error={nameError && t(nameError)}
+                onChangeNickname={(t) => {
+                  setNickname(t);
+                  if (nameError) setNameError(null);
+                }}
+                onEditAvatar={() => {
+                  Keyboard.dismiss();
+                  setAvatarOpen(true);
+                }}
+              />
             </Animated.View>
 
             <Animated.View entering={FadeInDown.delay(250).springify()} style={styles.actions}>
               <CartoonButton
-                title="Private Game"
+                title={t('lobby.private')}
                 size="lg"
                 gradient={gradients.primary}
                 lipColor={colors.darkOrange}
@@ -119,7 +123,7 @@ export default function LobbyScreen() {
                 onPress={openPrivate}
                 textStyle={styles.bigBtnText}
               />
-              <Text style={styles.footnote}>Play with 4–8 friends · share a 5-letter code</Text>
+              <Text style={[styles.footnote, textStyle]}>{t('lobby.footnote')}</Text>
             </Animated.View>
           </ScrollView>
         </Animated.View>

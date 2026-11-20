@@ -8,6 +8,7 @@ const config = require('./config');
 const { SessionStore } = require('./sessions/SessionStore');
 const { RoomManager } = require('./rooms/RoomManager');
 const { registerSocketHandlers } = require('./socket/registerSocketHandlers');
+const { createRateLimiter } = require('./utils/rateLimit');
 
 const channel = (code) => `room:${code}`;
 
@@ -17,8 +18,11 @@ function createGameServer() {
   app.disable('x-powered-by');
 
   const httpServer = http.createServer(app);
+  const allowConnection = createRateLimiter({ windowMs: 10000, maxAttempts: 120 });
   const io = new Server(httpServer, {
     cors: { origin: config.CORS_ORIGIN },
+    allowRequest: (req, reply) => reply(null, allowConnection(req.socket.remoteAddress)),
+    maxHttpBufferSize: 128 * 1024,
     pingInterval: 10000,
     pingTimeout: 8000,
   });
@@ -42,16 +46,19 @@ function createGameServer() {
   });
 
   const cleanupTimer = setInterval(() => {
-    rooms.cleanup();
     sessions.cleanup(config.SESSION_TTL_MS);
+    rooms.cleanup();
   }, config.CLEANUP_INTERVAL_MS);
   cleanupTimer.unref();
 
   const close = () =>
     new Promise((resolve) => {
       clearInterval(cleanupTimer);
-      for (const room of rooms.rooms.values()) room.destroy();
-      io.close(() => resolve());
+      io.close(() => {
+        for (const room of rooms.rooms.values()) room.destroy();
+        rooms.rooms.clear();
+        resolve();
+      });
     });
 
   return { app, httpServer, io, sessions, rooms, close };

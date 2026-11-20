@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Keyboard, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { SlideInDown } from 'react-native-reanimated';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import CartoonButton from '../common/CartoonButton';
 import useKeyboardLift from '../../hooks/useKeyboardLift';
 import { ROOM_CODE_LENGTH } from '../../config';
+import { useI18n } from '../../i18n';
 import { colors, fonts, gradients, cartoonShadow } from '../../theme';
 
 /**
@@ -15,10 +16,26 @@ import { colors, fonts, gradients, cartoonShadow } from '../../theme';
  * `onJoin(code)` / `onCreate()` must resolve to the server ack `{ ok, error }`.
  */
 export default function PrivateGameModal({ visible, onClose, onJoin, onCreate }) {
+  const dismiss = () => {
+    Keyboard.dismiss();
+    onClose();
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={dismiss} statusBarTranslucent>
+      <SafeAreaProvider>
+        <PrivateGameSheet visible={visible} onClose={dismiss} onJoin={onJoin} onCreate={onCreate} />
+      </SafeAreaProvider>
+    </Modal>
+  );
+}
+
+function PrivateGameSheet({ visible, onClose, onJoin, onCreate }) {
+  const { t, tError, textStyle, alignStart } = useI18n();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(null); // 'join' | 'create' | null
   const [error, setError] = useState(null);
-  const { targetRef, liftStyle } = useKeyboardLift({ margin: 0 });
+  const { targetRef, liftStyle } = useKeyboardLift({ margin: 12, enabled: visible });
 
   useEffect(() => {
     if (visible) {
@@ -32,7 +49,7 @@ export default function PrivateGameModal({ visible, onClose, onJoin, onCreate })
     setError(null);
     const res = await fn();
     setBusy(null);
-    if (!res?.ok) setError(res?.error || 'Something went wrong');
+    if (!res?.ok) setError(res ?? { code: 'GENERIC' });
     // On success the server pushes room_state and the app navigates automatically.
   };
 
@@ -40,31 +57,27 @@ export default function PrivateGameModal({ visible, onClose, onJoin, onCreate })
   const canJoin = cleanCode.length === ROOM_CODE_LENGTH && !busy;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      {/* Modals render in their own native window -> they need their own SafeAreaProvider */}
-      <SafeAreaProvider>
-      {/* No KeyboardAvoidingView: it re-lays out (squishes) the sheet. The sheet is
-          lifted as one rigid block with a transform that follows the keyboard. */}
-      <View style={styles.backdrop}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
-        <Animated.View ref={targetRef} collapsable={false} style={liftStyle}>
+    <View style={styles.backdrop}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel={t('common.close')} />
+      <Animated.View style={liftStyle}>
         <Animated.View entering={SlideInDown.springify().damping(16)} style={styles.sheet}>
           <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.sheetInner}>
           <View style={styles.header}>
-            <Text style={styles.title}>Private Game</Text>
-            <Pressable onPress={onClose} hitSlop={10} style={styles.close} accessibilityLabel="Close">
+            <Text style={[styles.title, textStyle]}>{t('lobby.private')}</Text>
+            <Pressable onPress={onClose} hitSlop={10} style={styles.close} accessibilityLabel={t('common.close')}>
               <Ionicons name="close" size={22} color={colors.night} />
             </Pressable>
           </View>
 
           {/* ---- Option 1: join with a code */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>🤝 Join a friend</Text>
+            <Text style={[styles.sectionTitle, alignStart]}>{t('private.joinFriend')}</Text>
             <View style={styles.joinRow}>
               <TextInput
+                ref={targetRef}
                 value={cleanCode}
                 onChangeText={(t) => setCode(t)}
-                placeholder="CODE"
+                placeholder={t('private.code')}
                 placeholderTextColor={colors.muted}
                 autoCapitalize="characters"
                 autoCorrect={false}
@@ -72,10 +85,10 @@ export default function PrivateGameModal({ visible, onClose, onJoin, onCreate })
                 returnKeyType="go"
                 onSubmitEditing={() => canJoin && run('join', () => onJoin(cleanCode))}
                 style={styles.codeInput}
-                accessibilityLabel="Enter Room Code"
+                accessibilityLabel={t('private.enterCode')}
               />
               <CartoonButton
-                title="Join"
+                title={t('private.join')}
                 size="md"
                 gradient={gradients.success}
                 lipColor={colors.darkGreen}
@@ -89,13 +102,13 @@ export default function PrivateGameModal({ visible, onClose, onJoin, onCreate })
 
           <View style={styles.dividerRow}>
             <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>OR</Text>
+            <Text style={[styles.dividerText, textStyle]}>{t('private.or')}</Text>
             <View style={styles.dividerLine} />
           </View>
 
           {/* ---- Option 2: host a new lobby */}
           <CartoonButton
-            title="Create Private Lobby"
+            title={t('private.create')}
             size="lg"
             gradient={gradients.primary}
             lipColor={colors.darkOrange}
@@ -105,13 +118,11 @@ export default function PrivateGameModal({ visible, onClose, onJoin, onCreate })
             onPress={() => run('create', onCreate)}
           />
 
-          {!!error && <Text style={styles.error}>⚠️ {error}</Text>}
+          {!!error && <Text style={[styles.error, textStyle]}>⚠️ {tError(error)}</Text>}
           </SafeAreaView>
         </Animated.View>
-        </Animated.View>
-      </View>
-      </SafeAreaProvider>
-    </Modal>
+      </Animated.View>
+    </View>
   );
 }
 

@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Animated, { FadeIn, ZoomIn } from 'react-native-reanimated';
 import PlayingCard, { CARD_SIZES } from './PlayingCard';
+import { useI18n } from '../../i18n';
 import { colors, fonts } from '../../theme';
 
 const REPLAY_MS = 2600; // the whole touch trail replays in this time
@@ -47,6 +48,7 @@ export function analyzeTouches(touches, handSize) {
  * Change `replayKey` to replay the trail.
  */
 export default function TouchHeatmap({ touches, handSize, offeredSlot, decisionMs, width, replayKey = 0 }) {
+  const { t, textStyle } = useI18n();
   const stats = useMemo(() => analyzeTouches(touches, handSize), [touches, handSize]);
 
   const gap = 8;
@@ -78,7 +80,7 @@ export default function TouchHeatmap({ touches, handSize, offeredSlot, decisionM
             {picked && (
               <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.picked]}>
                 <View style={styles.pickedTag}>
-                  <Text style={styles.pickedText}>PICKED</Text>
+                  <Text style={[styles.pickedText, textStyle]}>{t('var.picked')}</Text>
                 </View>
               </View>
             )}
@@ -109,7 +111,7 @@ export default function TouchHeatmap({ touches, handSize, offeredSlot, decisionM
 
       {touches.length === 0 && (
         <Animated.View entering={FadeIn} style={[StyleSheet.absoluteFill, styles.empty]} pointerEvents="none">
-          <Text style={styles.emptyText}>No touches recorded</Text>
+          <Text style={[styles.emptyText, textStyle]}>{t('var.empty')}</Text>
         </Animated.View>
       )}
     </View>

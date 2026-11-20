@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Animated, {
-  FadeInUp,
+  FadeIn,
+  LinearTransition,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
@@ -11,9 +12,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import PlayingCard, { CARD_SIZES } from './PlayingCard';
+import { useI18n } from '../../i18n';
 import { colors, fonts } from '../../theme';
 
 const SPRING = { damping: 14, stiffness: 180, mass: 0.8 };
+const SLOT_TRANSITION = LinearTransition.springify().damping(14).stiffness(180).mass(0.8);
 export const OFFER_DRAG_THRESHOLD = 90; // px upward to "throw" a card onto the table
 const FLIP_MS = 220; // anti-spy flip: fast enough to feel instant, slow enough to read as a flip
 const TOUCH_MOVE_EVERY = 3; // forward every Nth touch-move sample to JS (UI-thread throttle)
@@ -30,10 +33,8 @@ const noop = () => {};
  * ONLY this inner layer rotates - the card's slot, fan transform and gesture
  * transform are untouched, so concealing never moves or reorders anything.
  *
- * Touch fix (iOS): both faces are `pointerEvents="none"` and the root has an
- * explicit, flat (2D) hit box. UIKit hit-testing therefore never has to deal
- * with the 3D-transformed / alpha-0 faces - every touch lands on the root,
- * which sits inside the GestureDetector's view.
+ * The visual layer is transparent to touches. The enclosing gesture target
+ * owns the card hitbox for both faces.
  */
 function FlipCard({ card, size, highlighted, concealed }) {
   const s = CARD_SIZES[size] || CARD_SIZES.md;
@@ -54,11 +55,11 @@ function FlipCard({ card, size, highlighted, concealed }) {
   }));
 
   return (
-    <View style={{ width: s.w, height: s.h }} collapsable={false}>
-      <Animated.View style={[styles.face, front]} pointerEvents="none">
+    <View pointerEvents="none" style={{ width: s.w, height: s.h }}>
+      <Animated.View style={[styles.face, front]}>
         <PlayingCard card={card} size={size} highlighted={highlighted} />
       </Animated.View>
-      <Animated.View style={[styles.face, styles.backFace, back]} pointerEvents="none">
+      <Animated.View style={[styles.face, styles.backFace, back]}>
         <PlayingCard card={null} faceDown size={size} highlighted={highlighted} />
       </Animated.View>
     </View>
@@ -67,8 +68,7 @@ function FlipCard({ card, size, highlighted, concealed }) {
 
 function HandCard({
   card,
-  x,
-  y,
+  left,
   rotate,
   zIndex,
   size,
@@ -82,13 +82,11 @@ function HandCard({
   onDragStart,
   onDragOffer,
   onTouchSample,
-  resetNonce,
+  resetKey,
   shuffleNonce,
-  containerWidth,
 }) {
+  const { t, textStyle } = useI18n();
   const s = CARD_SIZES[size];
-  const bx = useSharedValue(x);
-  const by = useSharedValue(y);
   const br = useSharedValue(rotate);
   const lift = useSharedValue(selected ? 1 : 0);
   const dragX = useSharedValue(0);
@@ -98,12 +96,9 @@ function HandCard({
   const hop = useSharedValue(0);
   const moveTick = useSharedValue(0);
 
-  // Re-fan smoothly whenever the hand size or order changes (e.g. Shuffle).
   useEffect(() => {
-    bx.value = withSpring(x, SPRING);
-    by.value = withSpring(y, SPRING);
     br.value = withSpring(rotate, SPRING);
-  }, [x, y, rotate, bx, by, br]);
+  }, [rotate, br]);
 
   useEffect(() => {
     lift.value = withSpring(selected ? 1 : 0, SPRING);
@@ -115,12 +110,12 @@ function HandCard({
     hop.value = withSequence(withTiming(1, { duration: 110 }), withSpring(0, { damping: 9, stiffness: 220 }));
   }, [shuffleNonce, hop]);
 
-  // Parent bumps `resetNonce` if a drag-offer was rejected by the server.
+  // Reset a thrown card when the server rejects the offer or the move changes.
   useEffect(() => {
     dragX.value = withSpring(0, SPRING);
     dragY.value = withSpring(0, SPRING);
     opacity.value = withTiming(1);
-  }, [resetNonce, dragX, dragY, opacity]);
+  }, [resetKey, dragX, dragY, opacity]);
 
   const gesture = useMemo(() => {
     const select = onSelect || noop;
@@ -166,8 +161,8 @@ function HandCard({
         dragX.value = e.translationX;
         dragY.value = Math.min(e.translationY, 30);
       })
-      .onEnd((e) => {
-        if (e.translationY < -OFFER_DRAG_THRESHOLD) {
+      .onEnd((e, success) => {
+        if (success && e.translationY < -OFFER_DRAG_THRESHOLD) {
           // Fly toward the table, then let the server confirm.
           dragY.value = withTiming(-280, { duration: 220 });
           opacity.value = withTiming(0, { duration: 220 });
@@ -187,46 +182,34 @@ function HandCard({
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
     transform: [
-      { translateX: bx.value + dragX.value },
-      { translateY: by.value - lift.value * LIFT_PX - hop.value * 18 + dragY.value },
+      { translateX: dragX.value },
+      { translateY: -lift.value * LIFT_PX - hop.value * 18 + dragY.value },
       { rotate: `${br.value * (1 - dragging.value)}deg` },
       { scale: 1 + lift.value * 0.06 + dragging.value * 0.08 },
     ],
   }));
 
   return (
-    // Outer view: static position + entering animation (no transforms here,
-    // so the layout animation never fights the gesture-driven transform).
-    //
-    // MIDDLE-CARD FIX: every slot is laid out at the SAME spot (the centre of the
-    // hand) and the fan offset is only a transform on the inner view. With the
-    // default pointerEvents the slot itself is a hit target, so after a shuffle the
-    // slots of higher-z cards sat invisibly on top of the centre card and swallowed
-    // its touches. `box-none` = the slot never takes a touch; only the visible,
-    // transformed card (inside the GestureDetector) can.
-    <Animated.View
-      entering={FadeInUp.springify().damping(14)}
-      pointerEvents="box-none"
-      style={[styles.slot, { bottom, left: containerWidth / 2 - s.w / 2, zIndex, elevation: zIndex }]}
-    >
-      <GestureDetector gesture={gesture}>
-        <Animated.View
-          collapsable={false}
-          style={animatedStyle}
-          accessible
-          accessibilityRole="button"
-          accessibilityState={{ selected, disabled: !canSelect }}
-          accessibilityLabel={concealed ? 'Hidden card' : `${card.rank} ${card.suit}`}
-        >
-          <FlipCard card={card} size={size} highlighted={selected || isNew} concealed={concealed} />
-          {isNew && (
-            <View style={styles.newBadge} pointerEvents="none">
-              <Text style={styles.newText}>NEW</Text>
-            </View>
-          )}
-        </Animated.View>
-      </GestureDetector>
-    </Animated.View>
+    <GestureDetector gesture={gesture}>
+      <Animated.View
+        collapsable={false}
+        entering={FadeIn}
+        layout={SLOT_TRANSITION}
+        style={[styles.slot, { left, bottom, width: s.w, height: s.h, zIndex }, animatedStyle]}
+        accessible
+        accessibilityRole="button"
+        accessibilityState={{ selected, disabled: !canSelect }}
+        accessibilityLabel={concealed ? t('hand.hiddenCard') : card.rank === 'JOKER' ? t('hand.joker') : t('hand.card', { rank: card.rank, suit: t(`suit.${card.suit}`) })}
+        onAccessibilityTap={canSelect ? () => onSelect?.(card.id) : undefined}
+      >
+        <FlipCard card={card} size={size} highlighted={selected || isNew} concealed={concealed} />
+        {isNew && (
+          <View style={styles.newBadge} pointerEvents="none">
+            <Text style={[styles.newText, textStyle]}>{t('hand.new')}</Text>
+          </View>
+        )}
+      </Animated.View>
+    </GestureDetector>
   );
 }
 
@@ -245,11 +228,9 @@ export function handHeight(size, count = 5) {
  * - `onTouchSample(cardId, u, v, absX, absY, isDown)` streams touch telemetry.
  * - `shuffleNonce`: bump it to play the shuffle "hop".
  *
- * Rendering note: card views are rendered in a STABLE order (sorted by id) and
- * only their x / rotation / zIndex follow the hand order. Re-ordering keyed
- * native views (what a shuffle used to do) can leave iOS with stale transforms
- * and dead hit areas; moving props instead guarantees the visual update and
- * keeps every card tappable.
+ * Each gesture target is a direct sibling with its own native slot frame.
+ * Mounted card identities stay stable while their frames and stacking follow
+ * the current hand order.
  */
 export default function FannedHand({
   cards,
@@ -262,7 +243,7 @@ export default function FannedHand({
   onTouchSample,
   newCardId,
   concealed = false,
-  resetNonce = 0,
+  resetKey,
   shuffleNonce = 0,
   size: sizeProp,
   width: widthProp,
@@ -286,23 +267,19 @@ export default function FannedHand({
     // box-none: the full-width hand strip itself never captures a touch.
     <View pointerEvents="box-none" style={[styles.container, { height: handHeight(size, Math.max(n, 5)) }]}>
       {stable.map((card) => {
-        // `i` is the card's CURRENT (post-shuffle) slot. Stacking follows it
-        // left -> right (classic fan: each card overlaps the right part of its left
-        // neighbour), so the centre card (rotation 0) is always z = centre + 1 and
-        // its visible face is never under another card's invisible hit area.
         const i = slotOf.get(card.id);
         const rel = i - center;
+        // Place the innermost card above its neighbours. Break ties to the right.
+        const slotZIndex = 2 * n - 2 * Math.abs(rel) + (rel > 0 ? 1 : 0);
         return (
           <HandCard
             key={card.id}
             card={card}
             size={size}
-            bottom={bottom}
-            containerWidth={containerWidth}
-            x={rel * spread}
-            y={rel * rel * 5}
+            left={(containerWidth - s.w) / 2 + rel * spread}
+            bottom={bottom - rel * rel * 5}
             rotate={rel * 7}
-            zIndex={card.id === selectedId ? 50 : i + 1}
+            zIndex={card.id === selectedId ? 2 * n + 1 : slotZIndex}
             selected={card.id === selectedId}
             isNew={card.id === newCardId}
             concealed={concealed}
@@ -312,7 +289,7 @@ export default function FannedHand({
             onDragStart={onDragStart}
             onDragOffer={onDragOffer}
             onTouchSample={onTouchSample}
-            resetNonce={resetNonce}
+            resetKey={resetKey}
             shuffleNonce={shuffleNonce}
           />
         );

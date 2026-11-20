@@ -4,7 +4,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { io: connect } = require('socket.io-client');
 const { createGameServer } = require('../src/index');
+const { findWinningRank } = require('../src/game/deck');
 const config = require('../src/config');
+
+const MOVE_EVENTS = new Set(['request_card', 'offer_card', 'player_decision', 'use_lie_deye']);
+const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game']);
 
 /** Small client wrapper that tracks the latest pushed state. */
 function client(url, auth = {}) {
@@ -14,7 +18,14 @@ function client(url, auth = {}) {
   socket.on('room_state', (r) => (c.room = r));
   socket.on('game_state', (g) => (c.game = g));
   socket.on('game_event', (e) => c.events.push(e));
-  c.emit = (event, payload = {}) => socket.timeout(2000).emitWithAck(event, payload);
+  c.emit = (event, payload = {}) => {
+    let scope;
+    if (MOVE_EVENTS.has(event)) scope = { matchId: c.game?.matchId, step: c.game?.step };
+    else if (event === 'shuffle_hand') scope = { matchId: c.game?.matchId };
+    else if (HOST_EVENTS.has(event)) scope = { lifecycleId: c.room?.lifecycleId };
+    else if (event === 'leave_room') scope = { code: c.room?.code };
+    return socket.timeout(2000).emitWithAck(event, { ...scope, ...payload });
+  };
   c.ready = new Promise((resolve) => socket.on('session', resolve));
   return c;
 }
@@ -30,10 +41,25 @@ const until = async (fn, ms = 2000) => {
 
 test('socket flow: lobby -> game -> 3-offer rule -> redaction -> reconnect', { timeout: 15000 }, async () => {
   const server = createGameServer();
-  await new Promise((r) => server.httpServer.listen(0, r));
-  const url = `http://localhost:${server.httpServer.address().port}`;
+  await new Promise((r) => server.httpServer.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.httpServer.address().port}`;
   const clients = [];
   try {
+    const invalid = connect(url, {
+      transports: ['websocket'],
+      auth: { avatarId: '3' },
+      forceNew: true,
+      autoConnect: false,
+      reconnection: false,
+    });
+    try {
+      const rejected = new Promise((resolve) => invalid.once('connect_error', resolve));
+      invalid.connect();
+      assert.equal((await rejected).data?.code, 'BAD_PAYLOAD');
+      assert.equal(server.sessions.size, 0);
+    } finally {
+      invalid.close();
+    }
     await scenario(url, clients);
   } finally {
     clients.forEach((c) => c.socket.close());
@@ -55,7 +81,7 @@ async function scenario(url, clients) {
   assert.equal(created.ok, true);
   assert.match(created.code, /^[A-Z2-9]{5}$/);
 
-  const bad = await bob.emit('join_room', { code: 'ZZZZZ' });
+  const bad = await bob.emit('join_room', { code: created.code === 'ZZZZZ' ? 'YYYYY' : 'ZZZZZ' });
   assert.equal(bad.ok, false);
   assert.equal(bad.code, 'ROOM_NOT_FOUND');
 
@@ -65,11 +91,13 @@ async function scenario(url, clients) {
   assert.equal(host.room.hostId, host.session.playerId);
   assert.equal(host.room.minPlayers, 4);
   assert.ok(host.room.players.every((p) => p.tokens === 4), 'first game: 4 Lie Deye tokens each');
+  assert.equal((await host.emit('play_again')).code, 'NOT_FINISHED');
+  assert.equal((await bob.emit('update_profile', { avatarId: '3' })).code, 'BAD_PAYLOAD');
 
   // 3 players is not enough
   assert.equal((await host.emit('start_game')).code, 'NOT_ENOUGH_PLAYERS');
   assert.equal((await dan.emit('join_room', { code: created.code })).ok, true);
-  await until(() => host.room?.players.length === 4);
+  await until(() => clients.every((c) => c.room?.players.length === 4));
 
   const notHost = await bob.emit('start_game');
   assert.equal(notHost.code, 'NOT_HOST');
@@ -89,16 +117,20 @@ async function scenario(url, clients) {
   assert.equal(active.game.isolated, false);
 
   // --- request -> offer -> reject -> offer -> reject -> forced 3rd
-  assert.equal((await active.emit('request_card', { rank: active.game.ranks[0] })).ok, true);
+  const heldRank = holder.game.hand.find((card) => card.rank !== 'JOKER').rank;
+  assert.equal((await active.emit('request_card', { rank: heldRank })).ok, true);
   await until(() => holder.game.phase === 'OFFER');
 
-  const original = holder.game.hand.map((c) => c.id);
+  const owned = holder.game.hand;
+  const original = owned.map((c) => c.id);
+  assert.equal((await holder.emit('offer_card', { cardId: original[0], noCard: true })).code, 'HAS_RANK');
   const touches = [
     { s: 0, u: 0.5, v: 0.5, x: 0.2, y: 0.85, t: 300 },
     { s: 3, u: 0.6, v: 0.4, x: 0.6, y: 0.84, t: 900 },
   ];
   assert.equal((await holder.emit('offer_card', { cardId: original[0], touches })).ok, true);
   await until(() => active.game.phase === 'DECISION');
+  const firstDecision = active.game.step;
   assert.equal(active.game.offers[0].card, null, 'offered card is face-down for the receiver');
   assert.ok(holder.game.offers[0].card, 'holder sees their own offer');
 
@@ -135,10 +167,12 @@ async function scenario(url, clients) {
   await until(() => holder.game.phase === 'OFFER');
   await holder.emit('offer_card', { cardId: original[1] });
   await until(() => active.game.phase === 'DECISION');
+  assert.equal((await active.emit('player_decision', { step: firstDecision, accept: true })).code, 'STALE_ACTION');
+  assert.equal(active.game.offers.length, 2);
   await active.emit('player_decision', { accept: false });
   await until(() => holder.game.phase === 'OFFER' && holder.game.hand.length === 3);
 
-  const forcedCard = holder.game.hand[1].id;
+  const forcedCard = holder.game.hand.find((card) => !findWinningRank(owned.filter((other) => other.id !== card.id))).id;
   assert.equal((await holder.emit('offer_card', { cardId: forcedCard })).ok, true);
   await until(() => active.game.hand.length === 5);
   assert.ok(active.game.hand.some((c) => c.id === forcedCard), '3rd card auto-accepted');

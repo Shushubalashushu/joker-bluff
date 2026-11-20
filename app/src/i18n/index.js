@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { I18nManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../config';
@@ -45,7 +45,12 @@ export function translate(lang, key, params) {
   let k = key;
   if (params && params.count === 1 && (table[`${key}_one`] || DICTIONARY.en[`${key}_one`])) k = `${key}_one`;
   let s = table[k] ?? DICTIONARY.en[k] ?? key;
-  if (params) s = s.replace(/\{(\w+)\}/g, (m, p) => (params[p] !== undefined && params[p] !== null ? String(params[p]) : m));
+  if (params) s = s.replace(/\{(\w+)\}/g, (token, name) => {
+    const value = params[name];
+    if (value == null) return token;
+    // Isolate names, room codes and ranks from the surrounding Hebrew punctuation.
+    return lang === LANGS.HE ? `\u2068${value}\u2069` : String(value);
+  });
   return s;
 }
 
@@ -53,16 +58,18 @@ const I18nContext = createContext(null);
 
 export function LanguageProvider({ children }) {
   const [lang, setLangState] = useState(LANGS.EN);
+  const changedLanguage = useRef(false);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEYS.language)
       .then((saved) => {
-        if (saved === LANGS.EN || saved === LANGS.HE) setLangState(saved);
+        if (!changedLanguage.current && (saved === LANGS.EN || saved === LANGS.HE)) setLangState(saved);
       })
       .catch(() => {});
   }, []);
 
   const setLang = useCallback((next) => {
+    changedLanguage.current = true;
     setLangState(next);
     AsyncStorage.setItem(STORAGE_KEYS.language, next).catch(() => {});
   }, []);
@@ -77,12 +84,12 @@ export function LanguageProvider({ children }) {
       setLang,
       toggleLang,
       t,
-      /** Translates a server ack error by its `code` (falls back to the server's English message). */
+      /** Translates a server ack error by code. */
       tError: (res) => {
         if (!res) return t('errors.GENERIC');
         const key = `errors.${res.code}`;
         const s = translate(lang, key, res.params);
-        return s === key ? res.error || t('errors.GENERIC') : s;
+        return s === key ? t('errors.GENERIC') : s;
       },
       /** Spread onto ANY Text: correct bidi direction for the active language (alignment untouched). */
       textStyle: { writingDirection: isRTL ? 'rtl' : 'ltr' },

@@ -3,6 +3,7 @@ import { Pressable, StyleSheet } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useI18n } from '../i18n';
 import { useAudio } from '../context/AudioContext';
 import { colors, cartoonShadow } from '../theme';
 
@@ -14,6 +15,7 @@ export const AUDIO_TOGGLE_SIZE = 48;
  * background music / SFX will be implemented.
  */
 export default function AudioToggle() {
+  const { t } = useI18n();
   const { enabled, toggle } = useAudio();
   const insets = useSafeAreaInsets();
   const wobble = useSharedValue(0);
@@ -39,7 +41,7 @@ export default function AudioToggle() {
         hitSlop={10}
         accessibilityRole="switch"
         accessibilityState={{ checked: enabled }}
-        accessibilityLabel={enabled ? 'Mute sound' : 'Unmute sound'}
+        accessibilityLabel={t(enabled ? 'audio.mute' : 'audio.unmute')}
         style={[styles.button, { backgroundColor: enabled ? colors.yellow : colors.muted }]}
       >
         <Ionicons name={enabled ? 'volume-high' : 'volume-mute'} size={24} color={colors.night} />

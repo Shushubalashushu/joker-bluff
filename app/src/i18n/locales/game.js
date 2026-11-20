@@ -8,7 +8,7 @@ export default {
   en: {
     // ---- screen / header
     'game.loading': 'Shuffling… 🃏',
-    'game.headerChip': '{code} · Turn {turn} · {cards} cards',
+    'game.headerDetails': 'Turn {turn} · {cards} cards',
     'game.end': 'End',
     'game.a11yLeave': 'Leave game',
     'game.a11yEnd': 'End game for everyone',
@@ -77,6 +77,7 @@ export default {
     'nocard.button': "I don't have it",
     'nocard.badge': 'System Verified',
     'nocard.armed': '🔵✔ Verified: you have no {rank}. Now pick ANY card to pass face-down.',
+    'nocard.armedFinal': '✔ No {rank}. Pick a face-down card. They must take it.',
     'nocard.offer': 'Pass with ✔ stamp',
     'nocard.cancel': 'Cancel',
     'nocard.received': '🔵✔ System verified: {name} has no {rank} - this card is a forced bluff.',
@@ -102,12 +103,13 @@ export default {
     'table.a11yLieDeye': 'Lie Deye used on this card',
     'table.verified': 'VERIFIED',
     'table.verifiedNo': 'No {rank}',
+    'table.verifiedTransfer': '✔ Verified bluff · no {rank}',
     'table.a11yVerified': 'System verified: the giver has no {rank}',
   },
 
   he: {
     'game.loading': 'מערבבים… 🃏',
-    'game.headerChip': '{code} · תור {turn} · {cards} קלפים',
+    'game.headerDetails': 'תור {turn} · {cards} קלפים',
     'game.end': 'סיום',
     'game.a11yLeave': 'יציאה מהמשחק',
     'game.a11yEnd': 'סיום המשחק לכולם',
@@ -170,6 +172,7 @@ export default {
     'nocard.button': 'אין לי',
     'nocard.badge': 'מאומת ע״י המערכת',
     'nocard.armed': '🔵✔ מאומת: אין לך {rank}. עכשיו בחר/י קלף כלשהו למסירה הפוכה.',
+    'nocard.armedFinal': '✔ אין לך {rank}. בחר/י קלף הפוך. חובה לקחת אותו.',
     'nocard.offer': 'מסור עם חותמת ✔',
     'nocard.cancel': 'ביטול',
     'nocard.received': '🔵✔ אומת ע״י המערכת: ל{name} אין {rank} - זה בלוף מאולץ.',
@@ -193,6 +196,7 @@ export default {
     'table.a11yLieDeye': 'נעשה שימוש ב-Lie Deye על הקלף הזה',
     'table.verified': 'מאומת',
     'table.verifiedNo': 'אין {rank}',
+    'table.verifiedTransfer': '✔ בלוף מאומת · אין {rank}',
     'table.a11yVerified': 'אומת ע״י המערכת: לנותן/ת אין {rank}',
   },
 };

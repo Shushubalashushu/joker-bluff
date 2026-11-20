@@ -166,11 +166,11 @@ export default function ActionPanel({
     content = (
       <>
         <Text style={[styles.title, compact && styles.titleCompact, textStyle]}>
-          {rich(t('action.wants', { name: activeName }), { rank: hl(game.requestedRank) })}
+          {rich(t('action.wants'), { name: activeName, rank: hl(game.requestedRank) })}
         </Text>
         <Text style={[styles.sub, final && styles.warn, armed && styles.verifiedSub, textStyle]}>
           {armed
-            ? t('nocard.armed', { rank: game.requestedRank })
+            ? t(final ? 'nocard.armedFinal' : 'nocard.armed', { rank: game.requestedRank })
             : final
             ? t('action.finalOffer')
             : t('action.offerHint', { n: nextNumber })}
@@ -210,6 +210,9 @@ export default function ActionPanel({
               {offerNumber === 2 ? t('action.rejectWarn') : t('action.bluffQ')}
             </Text>
           )
+        )}
+        {pendingOffer?.verifiedNoCard && offerNumber === 2 && (
+          <Text style={[styles.sub, styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>
         )}
         <LieDeyeBar game={game} busy={busy} onUse={onLieDeye} onOpen={onOpenLieDeye} />
         <View style={styles.decisionRow}>

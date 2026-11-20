@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../config';
-import { randomNickname } from '../constants/avatars';
+import { AVATARS, randomNickname } from '../constants/avatars';
 
 const ProfileContext = createContext(null);
 
@@ -19,9 +19,9 @@ export function ProfileProvider({ children }) {
         const raw = await AsyncStorage.getItem(STORAGE_KEYS.profile);
         const saved = raw ? JSON.parse(raw) : null;
         setProfile({
-          nickname: saved?.nickname ?? randomNickname(),
-          avatarId: Number.isInteger(saved?.avatarId) ? saved.avatarId : Math.floor(Math.random() * 12),
-          token: saved?.token ?? null,
+          nickname: typeof saved?.nickname === 'string' ? saved.nickname.slice(0, 128) : randomNickname(),
+          avatarId: Number.isInteger(saved?.avatarId) && AVATARS[saved.avatarId] ? saved.avatarId : Math.floor(Math.random() * AVATARS.length),
+          token: typeof saved?.token === 'string' && /^[A-Za-z0-9_-]{32}$/.test(saved.token) ? saved.token : null,
         });
       } catch {
         setProfile((p) => ({ ...p, nickname: randomNickname() }));

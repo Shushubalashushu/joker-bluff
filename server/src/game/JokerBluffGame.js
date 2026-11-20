@@ -1,17 +1,20 @@
 'use strict';
 
+const { randomInt } = require('node:crypto');
 const { PHASES } = require('../shared/events');
 const { buildDeck, shuffle, isJoker, findWinningRank, JOKER } = require('./deck');
 const { sanitizeTouches } = require('./telemetry');
 const config = require('../config');
 
 const DEFAULT_TIMERS = config.TIMERS;
+const RANDOM_RANGE = 2 ** 47;
 
 class GameError extends Error {
-  constructor(code, message) {
+  constructor(code, message, params) {
     super(message);
     this.name = 'GameError';
     this.code = code;
+    this.params = params;
   }
 }
 
@@ -50,7 +53,7 @@ class JokerBluffGame {
       throw new GameError('BAD_PLAYERS', 'playerIds must be unique');
     }
     this.seats = [...playerIds];
-    this.rng = opts.rng || Math.random;
+    this.rng = opts.rng ?? (() => randomInt(RANDOM_RANGE) / RANDOM_RANGE);
     this.now = opts.now || Date.now;
     this.timers = { ...DEFAULT_TIMERS, ...(opts.timers || {}) };
     this.isConnected = opts.isConnected || (() => true);
@@ -77,6 +80,7 @@ class JokerBluffGame {
     this.offers = [];
     this.offerPhaseShuffles = 0; // how often the holder shuffled while choosing the current offer
     this.turn = 0;
+    this.step = 0;
     this.deadline = null;
     this.phaseDuration = 0;
     this.phaseStartedAt = null;
@@ -227,7 +231,7 @@ class JokerBluffGame {
     if (offer.lieDeyeUsed) throw new GameError('ALREADY_READ', 'You already used Lie Deye on this card');
     const used = this.lieDeyeUses.get(playerId) || 0;
     if (used >= this.maxLieDeyeUses) {
-      throw new GameError('LIE_DEYE_LIMIT', `Max ${this.maxLieDeyeUses} Lie Deye uses per game`);
+      throw new GameError('LIE_DEYE_LIMIT', `Max ${this.maxLieDeyeUses} Lie Deye uses per game`, { max: this.maxLieDeyeUses });
     }
     const balance = this.tokens.get(playerId) || 0;
     if (balance <= 0) throw new GameError('NO_TOKENS', 'No Lie Deye tokens left');
@@ -246,6 +250,7 @@ class JokerBluffGame {
         offerNumber: this.offers.length,
         tokensLeft: balance - 1,
         usesLeft: this.maxLieDeyeUses - used - 1,
+        durationMs: this.timers.LIE_DEYE,
       },
     ];
   }
@@ -264,6 +269,7 @@ class JokerBluffGame {
     const hand = this.hands.get(playerId);
     if (!hand) throw new GameError('NOT_IN_GAME', 'You are not in this game');
     if (hand.length > 1) {
+      const before = hand.map((c) => c.id).join();
       const byId = new Map(hand.map((c) => [c.id, c]));
       const valid =
         Array.isArray(order) &&
@@ -273,11 +279,12 @@ class JokerBluffGame {
       if (valid) {
         hand.splice(0, hand.length, ...order.map((id) => byId.get(id)));
       } else {
-        const before = hand.map((c) => c.id).join();
         for (let i = 0; i < 6 && hand.map((c) => c.id).join() === before; i++) shuffle(hand, this.rng);
       }
+      if (this.phase === PHASES.OFFER && playerId === this.holderId && hand.map((c) => c.id).join() !== before) {
+        this.offerPhaseShuffles += 1;
+      }
     }
-    if (this.phase === PHASES.OFFER && playerId === this.holderId) this.offerPhaseShuffles += 1;
     return [];
   }
 
@@ -352,6 +359,7 @@ class JokerBluffGame {
     return {
       phase: this.phase,
       turn: this.turn,
+      step: this.step,
       ranks: this.ranks,
       deckSize: this.ranks.length * 4 + 1,
       seats: this.seats.map((id) => ({
@@ -438,11 +446,14 @@ class JokerBluffGame {
     const toId = this.activeId;
     const offerNumber = this.offers.length;
     const accepted = this.offers[offerNumber - 1];
+    const verifiedRank = accepted.verifiedNoCard ? this.requestedRank : null;
+    const giverHand = this.hands.get(fromId);
+    const passedFifthCard = giverHand.length + offerNumber === 5;
     accepted.status = 'accepted';
 
     this.hands.get(toId).push(accepted.card);
     // Rejected face-down cards go back into the giver's hand.
-    for (const o of this.offers) if (o.status === 'rejected') this.hands.get(fromId).push(o.card);
+    for (const o of this.offers) if (o.status === 'rejected') giverHand.push(o.card);
 
     this.lastTransfer = {
       fromId,
@@ -452,6 +463,7 @@ class JokerBluffGame {
       cardId: accepted.card.id,
       turn: this.turn,
       verifiedNoCard: !!accepted.verifiedNoCard,
+      verifiedRank,
     };
     this.offers = [];
     this.requestedRank = null;
@@ -469,11 +481,12 @@ class JokerBluffGame {
         offerNumber,
         forced,
         verifiedNoCard: !!accepted.verifiedNoCard,
+        verifiedRank,
         nextHolderId: this.holderId,
         nextActiveId: this.activeId,
       },
     ];
-    const win = this._checkAutoWin(fromId);
+    const win = passedFifthCard ? this._checkAutoWin(fromId) : null;
     if (win) events.push(win);
     else this._enterPhase(PHASES.REQUEST);
     return events;
@@ -493,6 +506,7 @@ class JokerBluffGame {
     this.phase = PHASES.FINISHED;
     this.deadline = null;
     this.phaseDuration = 0;
+    this.phaseStartedAt = null;
     this.result = { winnerId: giverId, loserId, winningRank, auto: true };
     return { type: 'game_over', winnerId: giverId, loserId, winningRank, auto: true };
   }
@@ -505,6 +519,7 @@ class JokerBluffGame {
 
   _enterPhase(phase) {
     this.phase = phase;
+    this.step += 1;
     const actor = this.actorId;
     const duration = this.isConnected(actor) ? this.timers[phase] : this.timers.AFK;
     this.phaseDuration = duration;

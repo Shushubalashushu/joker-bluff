@@ -6,12 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 /**
  * "Slide, don't squish" keyboard handling (iOS).
  *
- * Instead of letting a KeyboardAvoidingView shrink the screen (which compresses
- * every flex child), we measure the focused target (`targetRef`, e.g. the
- * profile card or the bottom sheet) and translate a wrapper UP by exactly the
- * amount the keyboard would cover. Transforms never trigger a re-layout, so
- * nothing changes size - it just glides up and back down with the keyboard's
- * own animation curve/duration.
+ * Measure the focused input and translate its wrapper by the overlap with the
+ * keyboard. A transform leaves the screen and its children at their layout size.
  *
  * Android uses `softwareKeyboardLayoutMode: "pan"` (app.json) instead, where
  * the OS pans the window, so the hook is a no-op there.
@@ -34,11 +30,14 @@ export default function useKeyboardLift({ margin = 12, enabled = true } = {}) {
 
   useEffect(() => {
     if (!active) return undefined;
-    const show = Keyboard.addListener('keyboardWillShow', (e) => {
+    let measurement = 0;
+    const adjust = (e) => {
+      const request = ++measurement;
       const kbTop = e.endCoordinates.screenY;
       const node = targetRef.current;
-      if (!node?.measureInWindow) return;
+      if (!node?.isFocused()) return;
       node.measureInWindow((x, y, w, h) => {
+        if (request !== measurement || targetRef.current !== node || !node.isFocused()) return;
         // measureInWindow reports the CURRENT (possibly already lifted) frame.
         const current = lift.value;
         const top = y + current;
@@ -47,10 +46,17 @@ export default function useKeyboardLift({ margin = 12, enabled = true } = {}) {
         const maxLift = Math.max(0, top - insets.top - 8); // never push the target under the notch
         animateTo(Math.max(0, Math.min(needed, maxLift)), e.duration);
       });
+    };
+    const show = Keyboard.addListener('keyboardWillShow', adjust);
+    const frame = Keyboard.addListener('keyboardWillChangeFrame', adjust);
+    const hide = Keyboard.addListener('keyboardWillHide', (e) => {
+      measurement += 1;
+      animateTo(0, e.duration);
     });
-    const hide = Keyboard.addListener('keyboardWillHide', (e) => animateTo(0, e.duration));
     return () => {
+      measurement += 1;
       show.remove();
+      frame.remove();
       hide.remove();
       lift.value = 0;
     };

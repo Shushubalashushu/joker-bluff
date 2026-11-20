@@ -1,5 +1,6 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
 const config = require('../config');
 const { S2C, C2S } = require('../shared/events');
 const { JokerBluffGame, GameError } = require('../game/JokerBluffGame');
@@ -12,6 +13,7 @@ const ABORT_REASONS = Object.freeze({
   PLAYER_LEFT: 'player_left',
   PLAYER_DISCONNECTED: 'player_disconnected',
   HOST_ENDED: 'host_ended',
+  SERVER_ERROR: 'server_error',
 });
 
 /**
@@ -36,6 +38,7 @@ class Room {
    */
   constructor({ code, sessions, transport }) {
     this.code = code;
+    this.lifecycleId = randomUUID();
     this.sessions = sessions;
     this.transport = transport;
     this.hostId = null;
@@ -85,13 +88,12 @@ class Room {
 
   /** Adds a new seat, or re-seats a returning player (reconnect). */
   addPlayer(session) {
+    this.assertCanSeat(session.playerId);
     const existing = this.players.find((p) => p.id === session.playerId);
     if (existing) {
       existing.nickname = session.nickname;
       existing.avatarId = session.avatarId;
     } else {
-      if (this.status !== ROOM_STATUS.WAITING) throw new GameError('IN_PROGRESS', 'That game has already started');
-      if (this.players.length >= config.MAX_PLAYERS) throw new GameError('ROOM_FULL', 'This lobby is full');
       this.players.push({ id: session.playerId, nickname: session.nickname, avatarId: session.avatarId });
     }
     if (!this.hostId) this.hostId = session.playerId;
@@ -99,6 +101,12 @@ class Room {
     this._clearGrace(session.playerId);
     this.emptySince = null;
     this.onConnectionChanged();
+  }
+
+  assertCanSeat(playerId) {
+    if (this.hasPlayer(playerId)) return;
+    if (this.status !== ROOM_STATUS.WAITING) throw new GameError('IN_PROGRESS', 'That game has already started');
+    if (this.players.length >= config.MAX_PLAYERS) throw new GameError('ROOM_FULL', 'This lobby is full');
   }
 
   /**
@@ -135,18 +143,16 @@ class Room {
   /** Socket dropped (not an explicit leave): keep the seat for a grace period. */
   onPlayerDisconnected(playerId) {
     if (!this.hasPlayer(playerId)) return;
-    if (this.status === ROOM_STATUS.PLAYING) {
-      this._clearGrace(playerId);
-      const t = setTimeout(() => {
-        this.graceTimers.delete(playerId);
-        if (this.status !== ROOM_STATUS.PLAYING || !this.hasPlayer(playerId) || this.sessions.isConnected(playerId)) return;
-        const session = this.sessions.getByPlayerId(playerId);
-        if (session && session.roomCode === this.code) session.roomCode = null;
-        this.removePlayer(playerId, ABORT_REASONS.PLAYER_DISCONNECTED);
-      }, config.DISCONNECT_GRACE_MS);
-      t.unref?.();
-      this.graceTimers.set(playerId, t);
-    }
+    this._clearGrace(playerId);
+    const t = setTimeout(() => {
+      this.graceTimers.delete(playerId);
+      if (!this.hasPlayer(playerId) || this.sessions.isConnected(playerId)) return;
+      const session = this.sessions.getByPlayerId(playerId);
+      if (session?.roomCode === this.code) session.roomCode = null;
+      this.removePlayer(playerId, ABORT_REASONS.PLAYER_DISCONNECTED);
+    }, config.DISCONNECT_GRACE_MS);
+    t.unref?.();
+    this.graceTimers.set(playerId, t);
     this.onConnectionChanged();
   }
 
@@ -159,14 +165,22 @@ class Room {
 
   // ------------------------------------------------------------ lifecycle
 
-  startGame(byPlayerId) {
+  startGame(byPlayerId, { rematch = false } = {}) {
     if (byPlayerId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can start the game');
-    if (this.status === ROOM_STATUS.PLAYING) throw new GameError('IN_PROGRESS', 'Game already running');
+    const requiredStatus = rematch ? ROOM_STATUS.FINISHED : ROOM_STATUS.WAITING;
+    if (this.status !== requiredStatus) {
+      if (this.status === ROOM_STATUS.PLAYING) throw new GameError('IN_PROGRESS', 'Game already running');
+      if (rematch) throw new GameError('NOT_FINISHED', 'Finish a game before starting a rematch');
+      throw new GameError('REMATCH_REQUIRED', 'Use Play Again to start a rematch');
+    }
     if (this.players.length < config.MIN_PLAYERS) {
-      throw new GameError('NOT_ENOUGH_PLAYERS', `Need at least ${config.MIN_PLAYERS} players`);
+      throw new GameError('NOT_ENOUGH_PLAYERS', `Need at least ${config.MIN_PLAYERS} players`, { min: config.MIN_PLAYERS });
+    }
+    if (this.connectedCount !== this.players.length) {
+      throw new GameError('PLAYERS_OFFLINE', 'Wait for offline players to reconnect or leave the lobby');
     }
 
-    this.game = new JokerBluffGame(
+    const game = new JokerBluffGame(
       this.players.map((p) => p.id),
       {
         isConnected: (id) => this.hasPlayer(id) && this.sessions.isConnected(id),
@@ -174,9 +188,11 @@ class Room {
         tokenBalances: new Map(this.players.map((p) => [p.id, this.tokenBalance(p.id)])),
       }
     );
+    const events = game.start();
+    this.game = game;
+    this.lifecycleId = randomUUID();
     this.tokensSettled = false;
     this.status = ROOM_STATUS.PLAYING;
-    const events = this.game.start();
     this._afterGameChange(events);
   }
 
@@ -189,6 +205,7 @@ class Room {
 
   /** Routes the in-game socket events to the engine. */
   act(playerId, event, payload = {}) {
+    if (!this.hasPlayer(playerId)) throw new GameError('NO_ROOM', 'You are not in this lobby');
     if (this.status !== ROOM_STATUS.PLAYING || !this.game) throw new GameError('NOT_PLAYING', 'No game in progress');
     if (this.game.deadline && Date.now() > this.game.deadline + ACTION_GRACE_MS) {
       throw new GameError('TOO_LATE', 'Time is up!');
@@ -214,6 +231,14 @@ class Room {
     this._afterGameChange(events);
   }
 
+  assertLifecycle(id) {
+    if (id !== this.lifecycleId) throw new GameError('STALE_ACTION', 'The lobby or match has changed');
+  }
+
+  assertStep(step) {
+    if (!this.game || this.game.step !== step) throw new GameError('STALE_ACTION', 'That move is no longer current');
+  }
+
   /**
    * Shuffle Hand: allowed at ANY time during a match (no deadline check, no turn check).
    * The order lives on the server so Lie Deye slot indices match what the player saw.
@@ -222,7 +247,7 @@ class Room {
   shuffleHand(playerId, order) {
     if (!this.game || !this.hasPlayer(playerId)) throw new GameError('NOT_PLAYING', 'No game in progress');
     this.game.shuffleHand(playerId, order);
-    const state = this.game.getStateFor(playerId);
+    const state = this._matchStateFor(playerId);
     this.transport.toPlayer(playerId, S2C.GAME_STATE, state);
     return state.hand.map((c) => c.id);
   }
@@ -235,11 +260,18 @@ class Room {
     this.game = null;
   }
 
+  pruneTokenBank() {
+    for (const id of this.tokenBank.keys()) {
+      if (!this.sessions.getByPlayerId(id)) this.tokenBank.delete(id);
+    }
+  }
+
   // ------------------------------------------------------------ broadcasting
 
   publicState() {
     return {
       code: this.code,
+      lifecycleId: this.lifecycleId,
       hostId: this.hostId,
       status: this.status,
       minPlayers: config.MIN_PLAYERS,
@@ -260,17 +292,20 @@ class Room {
   broadcast() {
     this.transport.toRoom(this.code, S2C.ROOM_STATE, this.publicState());
     for (const p of this.players) {
-      this.transport.toPlayer(p.id, S2C.GAME_STATE, this.game ? this.game.getStateFor(p.id) : null);
+      this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
     }
+  }
+
+  _matchStateFor(playerId) {
+    return this.game ? { ...this.game.getStateFor(playerId), matchId: this.lifecycleId } : null;
   }
 
   _abortGame(info) {
     clearTimeout(this.timer);
     this.timer = null;
-    for (const t of this.graceTimers.values()) clearTimeout(t);
-    this.graceTimers.clear();
     this.game = null;
     this.status = ROOM_STATUS.WAITING;
+    this.lifecycleId = randomUUID();
     this.transport.toRoom(this.code, S2C.GAME_EVENT, { type: 'game_aborted', ...info, at: Date.now() });
     this.onConnectionChanged(); // broadcasts room_state (waiting) + game_state null
   }
@@ -316,20 +351,25 @@ class Room {
   _schedule() {
     clearTimeout(this.timer);
     this.timer = null;
-    if (!this.game || this.game.isFinished || !this.game.deadline) return;
-    const delay = Math.max(0, this.game.deadline - Date.now()) + ACTION_GRACE_MS;
-    this.timer = setTimeout(() => this._onTimeout(), delay);
+    const game = this.game;
+    if (!game || game.isFinished || !game.deadline) return;
+    const step = game.step;
+    const delay = Math.max(0, game.deadline + ACTION_GRACE_MS - Date.now());
+    this.timer = setTimeout(() => {
+      if (this.game === game && game.step === step) this._onTimeout();
+    }, delay);
     this.timer.unref?.();
   }
 
   _onTimeout() {
     this.timer = null;
     if (!this.game || this.game.isFinished) return;
-    if (Date.now() < this.game.deadline) return this._schedule();
+    if (Date.now() < this.game.deadline + ACTION_GRACE_MS) return this._schedule();
     try {
       this._afterGameChange(this.game.handleTimeout());
     } catch (err) {
       console.error(`[room ${this.code}] timeout handling failed`, err);
+      this._abortGame({ reason: ABORT_REASONS.SERVER_ERROR });
     }
   }
 }

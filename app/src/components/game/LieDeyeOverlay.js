@@ -6,22 +6,25 @@ import { Ionicons } from '@expo/vector-icons';
 import CartoonButton from '../common/CartoonButton';
 import TimerBar from './TimerBar';
 import TouchHeatmap, { ScreenMap, analyzeTouches, heatColor } from './TouchHeatmap';
+import LanguageToggle from '../LanguageToggle';
+import { useI18n } from '../../i18n';
 import { AUDIO_TOGGLE_SIZE } from '../AudioToggle';
 import { colors, fonts, gradients } from '../../theme';
 
-const secs = (ms) => `${(ms / 1000).toFixed(1)}s`;
+const secs = (t, ms, digits = 1) => t('var.seconds', { seconds: (ms / 1000).toFixed(digits) });
 
 function StatTile({ label, value, sub, tone = colors.yellow }) {
+  const { textStyle } = useI18n();
   return (
     <View style={styles.tile}>
-      <Text style={[styles.tileValue, { color: tone }]} numberOfLines={1} adjustsFontSizeToFit>
+      <Text style={[styles.tileValue, { color: tone }, textStyle]} numberOfLines={1} adjustsFontSizeToFit>
         {value}
       </Text>
-      <Text style={styles.tileLabel} numberOfLines={1}>
+      <Text style={[styles.tileLabel, textStyle]} numberOfLines={2}>
         {label}
       </Text>
       {!!sub && (
-        <Text style={styles.tileSub} numberOfLines={1}>
+        <Text style={[styles.tileSub, textStyle]} numberOfLines={2}>
           {sub}
         </Text>
       )}
@@ -30,19 +33,20 @@ function StatTile({ label, value, sub, tone = colors.yellow }) {
 }
 
 /** A playful (non-binding!) read of the giver's behaviour. */
-function verdictFor(d, stats) {
-  if (d.auto) return '⏱️ They ran out of time — the server picked the card for them.';
-  if (d.touches.length === 0) return '🤐 No touches at all. Poker face… or a lightning drag.';
-  if (stats.switches >= 3) return `🤔 Bounced between cards ${stats.switches} times. Real hesitation!`;
-  if (d.decisionMs < 2500) return '⚡ Snap decision. Confident — or rehearsed?';
-  if (d.phaseLimitMs && d.decisionMs > d.phaseLimitMs * 0.7) return '🐢 Took their sweet time. Something to hide?';
-  if (stats.cardsTouched === 1 && stats.perSlot[d.offeredSlot] > 0) return '🎯 Went straight for this one. No second thoughts.';
-  if (d.shuffles > 0) return `🔀 Shuffled ${d.shuffles}× while choosing. Trying to throw you off?`;
-  return '🧐 Inconclusive. Trust your gut!';
+function verdictFor(d, stats, t) {
+  if (d.auto) return t('var.auto');
+  if (d.touches.length === 0) return t('var.noTouches');
+  if (stats.switches >= 3) return t('var.switchCount', { count: stats.switches });
+  if (d.decisionMs < 2500) return t('var.quick');
+  if (d.phaseLimitMs && d.decisionMs > d.phaseLimitMs * 0.7) return t('var.slow');
+  if (stats.cardsTouched === 1 && stats.perSlot[d.offeredSlot] > 0) return t('var.direct');
+  if (d.shuffles > 0) return t('var.shuffleCount', { count: d.shuffles });
+  return t('var.unknown');
 }
 
 /** Time axis: every touch as a tick (coloured by slot heat), and the moment they offered. */
 function Timeline({ touches, decisionMs, limitMs }) {
+  const { t, textStyle } = useI18n();
   const maxT = Math.max(1, limitMs || decisionMs, decisionMs);
   return (
     <View style={styles.timeline}>
@@ -57,9 +61,9 @@ function Timeline({ touches, decisionMs, limitMs }) {
         <View style={[styles.pickMarker, { left: `${Math.min(100, (decisionMs / maxT) * 100)}%` }]} />
       </View>
       <View style={styles.timelineLabels}>
-        <Text style={styles.timelineText}>0s</Text>
-        <Text style={styles.timelineText}>offered @ {secs(decisionMs)}</Text>
-        <Text style={styles.timelineText}>{secs(maxT)}</Text>
+        <Text style={[styles.timelineText, textStyle]}>{secs(t, 0, 0)}</Text>
+        <Text style={[styles.timelineText, textStyle]}>{t('var.offeredAt', { time: secs(t, decisionMs) })}</Text>
+        <Text style={[styles.timelineText, textStyle]}>{secs(t, maxT)}</Text>
       </View>
     </View>
   );
@@ -72,6 +76,7 @@ function Timeline({ touches, decisionMs, limitMs }) {
  * the header reserves room for it. The receiver can decide right from here.
  */
 export default function LieDeyeOverlay({ visible, data, giverName, game, clockOffset, busy, width, onDecide, onClose }) {
+  const { t, textStyle, alignStart } = useI18n();
   const [replayKey, setReplayKey] = useState(0);
   const stats = useMemo(() => (data ? analyzeTouches(data.touches, data.handSize) : null), [data]);
   if (!visible || !data) return null;
@@ -83,39 +88,40 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
     <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={styles.backdrop}>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Minimize Lie Deye analysis">
+          <Pressable onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel={t('var.hide')}>
             <Ionicons name="chevron-down" size={22} color={colors.night} />
           </Pressable>
           <View style={styles.headerTitle}>
             <Text style={styles.title}>👁️ LIE DEYE</Text>
-            <Text style={styles.subtitle} numberOfLines={1}>
-              VAR review · Offer #{data.offerNumber} · {giverName}
+            <Text style={[styles.subtitle, textStyle]} numberOfLines={1}>
+              {t('var.subtitle', { offer: data.offerNumber, name: giverName })}
             </Text>
           </View>
+          <LanguageToggle compact />
           <View style={{ width: AUDIO_TOGGLE_SIZE }} />
         </View>
 
         <View style={styles.timer}>
-          <TimerBar deadline={game.deadline} duration={game.phaseDuration} clockOffset={clockOffset} frozen label="decide" compact />
+          <TimerBar deadline={game.deadline} duration={game.phaseDuration} clockOffset={clockOffset} frozen label={t('var.decide')} compact />
         </View>
 
-        <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
           <Animated.View entering={SlideInDown.springify().damping(16)} style={[styles.card, { width: contentW + 16 }]}>
             <View style={styles.tiles}>
               <StatTile
-                label="Decision time"
-                value={secs(data.decisionMs)}
-                sub={data.phaseLimitMs ? `of ${Math.round(data.phaseLimitMs / 1000)}s` : null}
+                label={t('var.time')}
+                value={secs(t, data.decisionMs)}
+                sub={data.phaseLimitMs ? t('var.of', { time: secs(t, data.phaseLimitMs, 0) }) : null}
                 tone={data.decisionMs < 2500 ? colors.teal : data.decisionMs > (data.phaseLimitMs || 15000) * 0.7 ? colors.red : colors.yellow}
               />
-              <StatTile label="Touches" value={String(data.touches.length)} sub={`${stats.onCards} on cards`} />
-              <StatTile label="Cards touched" value={`${stats.cardsTouched}/${data.handSize}`} />
-              <StatTile label="Switches" value={String(stats.switches)} tone={stats.switches >= 3 ? colors.red : colors.yellow} />
-              <StatTile label="Shuffles" value={String(data.shuffles)} tone={data.shuffles ? colors.pink : colors.yellow} />
-              <StatTile label="Picked slot" value={`#${data.offeredSlot + 1}`} sub="from the left" />
+              <StatTile label={t('var.touches')} value={String(data.touches.length)} sub={t('var.onCards', { count: stats.onCards })} />
+              <StatTile label={t('var.cardsTouched')} value={`${stats.cardsTouched}/${data.handSize}`} />
+              <StatTile label={t('var.switches')} value={String(stats.switches)} tone={stats.switches >= 3 ? colors.red : colors.yellow} />
+              <StatTile label={t('var.shuffles')} value={String(data.shuffles)} tone={data.shuffles ? colors.pink : colors.yellow} />
+              <StatTile label={t('var.pickedSlot')} value={`#${data.offeredSlot + 1}`} sub={t('var.fromLeft')} />
             </View>
 
-            <Text style={styles.section}>Touch heatmap</Text>
+            <Text style={[styles.section, alignStart]}>{t('var.heatmap')}</Text>
             <TouchHeatmap
               touches={data.touches}
               handSize={data.handSize}
@@ -127,37 +133,40 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
 
             <View style={styles.row}>
               <View style={styles.flex}>
-                <Text style={styles.section}>Timeline</Text>
+                <Text style={[styles.section, alignStart]}>{t('var.timeline')}</Text>
                 <Timeline touches={data.touches} decisionMs={data.decisionMs} limitMs={data.phaseLimitMs} />
                 <View style={styles.legend}>
                   <View style={[styles.legendDot, { backgroundColor: heatColor(0) }]} />
-                  <Text style={styles.legendText}>early</Text>
+                  <Text style={[styles.legendText, textStyle]}>{t('var.early')}</Text>
                   <View style={[styles.legendDot, { backgroundColor: heatColor(0.5) }]} />
                   <View style={[styles.legendDot, { backgroundColor: heatColor(1) }]} />
-                  <Text style={styles.legendText}>late</Text>
+                  <Text style={[styles.legendText, textStyle]}>{t('var.late')}</Text>
                 </View>
-                <Pressable onPress={() => setReplayKey((k) => k + 1)} style={styles.replay} accessibilityLabel="Replay touches">
+                <Pressable onPress={() => setReplayKey((k) => k + 1)} style={styles.replay} accessibilityLabel={t('var.replayTouches')}>
                   <Ionicons name="play" size={14} color={colors.night} />
-                  <Text style={styles.replayText}>Replay</Text>
+                  <Text style={[styles.replayText, textStyle]}>{t('var.replay')}</Text>
                 </Pressable>
               </View>
               <View style={styles.mapCol}>
-                <Text style={styles.section}>Screen</Text>
+                <Text style={[styles.section, alignStart]}>{t('var.screen')}</Text>
                 <ScreenMap touches={data.touches} decisionMs={data.decisionMs} replayKey={replayKey} />
               </View>
             </View>
 
             <View style={styles.verdict}>
-              <Text style={styles.verdictText}>{verdictFor(data, stats)}</Text>
+              <Text style={[styles.verdictText, alignStart]}>{verdictFor(data, stats, t)}</Text>
             </View>
           </Animated.View>
         </ScrollView>
 
         <View style={styles.footer}>
-          {forcedNext && <Text style={styles.warn}>⚠️ Reject and the 3rd card is forced on you!</Text>}
+          {game.offers[data.offerNumber - 1]?.verifiedNoCard && (
+            <Text style={[styles.warn, textStyle]}>{t('table.verifiedTransfer', { rank: game.requestedRank })}</Text>
+          )}
+          {forcedNext && <Text style={[styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>}
           <View style={styles.decisionRow}>
             <CartoonButton
-              title="Reject"
+              title={t('action.reject')}
               size="md"
               gradient={gradients.danger}
               lipColor={colors.darkRed}
@@ -167,7 +176,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
               style={styles.flex}
             />
             <CartoonButton
-              title="Take it"
+              title={t('action.take')}
               size="md"
               gradient={gradients.success}
               lipColor={colors.darkGreen}

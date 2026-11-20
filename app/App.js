@@ -50,7 +50,7 @@ export default function App() {
   }
 
   return (
-    <GestureHandlerRootView style={styles.fill}>
+    <GestureHandlerRootView style={[styles.fill, styles.layout]}>
       <SafeAreaProvider>
         <LanguageProvider>
           <ProfileProvider>
@@ -72,5 +72,6 @@ export default function App() {
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
+  layout: { direction: 'ltr' },
   splash: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.purple },
 });

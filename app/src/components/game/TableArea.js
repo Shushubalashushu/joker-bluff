@@ -20,6 +20,7 @@ function VerifiedStamp({ rank, cardSize }) {
     <Animated.View
       entering={ZoomIn.springify().damping(10)}
       style={[styles.verified, small && styles.verifiedSmall]}
+      accessible
       accessibilityLabel={t('table.a11yVerified', { rank })}
       pointerEvents="none"
     >
@@ -86,6 +87,8 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', conceal
   const holderName = nameOf(game.holderId);
   const activeName = nameOf(game.activeId);
   const isHolderView = myId === game.holderId;
+  const transfer = game.lastTransfer;
+  const showVerifiedTransfer = game.phase === PHASES.REQUEST && transfer?.forced && transfer.verifiedNoCard;
 
   return (
     <LinearGradient colors={gradients.felt} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.felt}>
@@ -107,6 +110,12 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', conceal
               {rich(t('table.gotAny'), { rank: <Text style={styles.bubbleRank}>{game.requestedRank}</Text> })}
             </Text>
           </Animated.View>
+        ) : showVerifiedTransfer ? (
+          <View style={[styles.bubble, styles.verifiedBubble]}>
+            <Text style={[styles.bubbleText, styles.verifiedBubbleText, compact && { fontSize: 12 }, textStyle]}>
+              {t('table.verifiedTransfer', { rank: transfer.verifiedRank })}
+            </Text>
+          </View>
         ) : (
           <View style={[styles.bubble, styles.bubbleIdle]}>
             <Text style={[styles.bubbleIdleText, textStyle]} numberOfLines={1}>
@@ -173,6 +182,8 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   bubbleText: { fontFamily: fonts.semibold, fontSize: 16, color: colors.night },
+  verifiedBubble: { backgroundColor: colors.darkBlue, borderColor: colors.white },
+  verifiedBubbleText: { color: colors.white },
   bubbleRank: { fontFamily: fonts.bold, color: colors.pink, fontSize: 20 },
   bubbleIdle: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'transparent' },
   bubbleIdleText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.white },

@@ -68,11 +68,9 @@ function applyOrder(hand, order) {
   return out;
 }
 
-// (The old "Reveal Four of a Kind!" DeclareButton is gone: the server now ends the
-// game automatically when a player passes their 5th card and holds 4 of a kind.)
-
 /** Small round pill used for the hand tools (Anti-spy, Shuffle). */
 function ToolButton({ icon, label, onPress, active = false, accessibilityLabel }) {
+  const { textStyle } = useI18n();
   return (
     <Pressable
       onPress={onPress}
@@ -83,7 +81,7 @@ function ToolButton({ icon, label, onPress, active = false, accessibilityLabel }
       style={({ pressed }) => [styles.tool, active && styles.toolActive, pressed && styles.toolPressed]}
     >
       <Ionicons name={icon} size={16} color={active ? colors.white : colors.night} />
-      {!!label && <Text style={[styles.toolText, active && { color: colors.white }]}>{label}</Text>}
+      {!!label && <Text style={[styles.toolText, active && { color: colors.white }, textStyle]}>{label}</Text>}
     </Pressable>
   );
 }
@@ -93,14 +91,14 @@ export default function GameScreen() {
     room,
     game,
     playerId,
+    connection,
     clockOffset,
-    lastEvent,
+    events,
     knownPlayers,
     concealed,
     requestCard,
     offerCard,
     decide,
-    declareWin,
     playAgain,
     leaveRoom,
     endGame,
@@ -109,64 +107,80 @@ export default function GameScreen() {
     setConcealed,
   } = useGame();
   const { playSfx } = useAudio();
+  const { t, tError, textStyle } = useI18n();
   const r = useResponsive();
 
   const [selectedCardId, setSelectedCardId] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [busyMove, setBusyMove] = useState(null);
   const [resetNonce, setResetNonce] = useState(0);
-  const [toast, setToast] = useState({ message: null, key: 0 });
+  const [toast, setToast] = useState(null);
   const [lieDeyeOpen, setLieDeyeOpen] = useState(false);
+  const [claimMove, setClaimMove] = useState(null);
   // Optimistic shuffle: local id order shown until the server's game_state catches up.
   const [localOrder, setLocalOrder] = useState(null);
   const [shuffleNonce, setShuffleNonce] = useState(0);
 
+  const matchId = game?.matchId;
+  const moveKey = matchId ? `${matchId}:${game.step}` : null;
+  const claimNoCard = !!game?.canClaimNoCard && claimMove === moveKey;
+  const moveRef = useRef(moveKey);
+  const matchRef = useRef(matchId);
+  const pendingMove = useRef(null);
+  moveRef.current = moveKey;
+  matchRef.current = matchId;
+  const busy = connection !== 'online' || (!!moveKey && busyMove === moveKey);
   const serverHand = game?.hand;
-  const displayHand = useMemo(() => applyOrder(serverHand || [], localOrder), [serverHand, localOrder]);
+  const displayHand = useMemo(
+    () => applyOrder(serverHand || [], localOrder?.matchId === matchId ? localOrder?.order : null),
+    [serverHand, localOrder, matchId]
+  );
   const displayHandRef = useRef(displayHand);
   displayHandRef.current = displayHand;
 
   const playersById = useMemo(() => Object.fromEntries((room?.players || []).map((p) => [p.id, p])), [room]);
   const nameOf = useCallback(
-    (id) => playersById[id]?.nickname ?? knownPlayers[id]?.nickname ?? '???',
-    [playersById, knownPlayers]
+    (id) => playersById[id]?.nickname ?? knownPlayers[id]?.nickname ?? t('common.aPlayer'),
+    [playersById, knownPlayers, t]
   );
 
   // Clear selection whenever the turn/offer step changes or the card leaves my hand.
-  const offerCount = game?.offers.length ?? 0;
   useEffect(() => {
     setSelectedCardId(null);
-  }, [game?.phase, game?.turn, offerCount]);
+  }, [moveKey]);
 
   // Server events -> toast + sfx hooks.
   useEffect(() => {
-    if (!lastEvent) return;
-    setToast({ message: describeEvent(lastEvent, nameOf, playerId), key: lastEvent.at });
+    const event = events.find((e) => e.type === 'game_over')
+      ?? events.find((e) => e.type === 'card_transferred' && e.verifiedNoCard)
+      ?? events[events.length - 1];
+    if (!event) return;
+    setToast({ event, key: `${event.type}-${event.at}` });
     const sfx = {
       card_offered: SFX.CARD_SLIDE,
       offer_rejected: SFX.REJECT,
-      card_transferred: lastEvent.forced ? SFX.FORCED : SFX.ACCEPT,
+      card_transferred: event.forced ? SFX.FORCED : SFX.ACCEPT,
       lie_deye_used: SFX.CARD_FLIP,
-      game_over: lastEvent.winnerId === playerId ? SFX.WIN : SFX.LOSE,
-    }[lastEvent.type];
+      game_over: event.winnerId === playerId ? SFX.WIN : event.loserId === playerId ? SFX.LOSE : null,
+    }[event.type];
     if (sfx) playSfx(sfx);
-  }, [lastEvent]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [events]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ------------------------------------------------------------ Lie Deye telemetry (giver side)
   // While *I* choose which card to offer, record where my finger rests/moves on my
   // cards. It's sent with the offer; the receiver only sees it if they spend a token.
   const isHolder = !!game && playerId === game.holderId;
   const recording = !!game && isHolder && game.phase === PHASES.OFFER;
+  const phaseStartedAt = game?.phaseStartedAt;
   const touchesRef = useRef([]);
   const lastSampleAt = useRef(0);
-  const offerStepKey = game ? `${game.turn}-${offerCount}-${game.phase}` : '';
   useEffect(() => {
     touchesRef.current = [];
     lastSampleAt.current = 0;
-  }, [offerStepKey]);
+  }, [moveKey]);
 
   const onTouchSample = useCallback(
     (cardId, u, v, absX, absY, isDown) => {
-      if (!recording || !game) return;
+      if (!recording || moveRef.current !== moveKey) return;
       const now = Date.now();
       if (!isDown && now - lastSampleAt.current < TOUCH_TELEMETRY.THROTTLE_MS) return;
       if (touchesRef.current.length >= TOUCH_TELEMETRY.MAX_SAMPLES) return;
@@ -177,14 +191,14 @@ export default function GameScreen() {
         v,
         x: absX / r.width,
         y: absY / r.height,
-        t: Math.max(0, now + clockOffset - (game.phaseStartedAt || now + clockOffset)), // ms since OFFER began (server clock)
+        t: Math.max(0, now + clockOffset - (phaseStartedAt ?? now + clockOffset)),
       });
     },
-    [recording, game, clockOffset, r.width, r.height]
+    [recording, moveKey, phaseStartedAt, clockOffset, r.width, r.height]
   );
 
   // ------------------------------------------------------------ Lie Deye overlay (receiver side)
-  const lieDeyeKey = game?.lieDeye ? `${game.turn}-${game.lieDeye.offerNumber}` : null;
+  const lieDeyeKey = game?.lieDeye ? moveKey : null;
   const seenLieDeye = useRef(null);
   useEffect(() => {
     if (!lieDeyeKey) {
@@ -199,30 +213,31 @@ export default function GameScreen() {
 
   // ------------------------------------------------------------ actions
   const run = useCallback(async (fn) => {
-    setBusy(true);
-    const res = await fn();
-    setBusy(false);
-    if (!res.ok) setToast({ message: `⚠️ ${res.error}`, key: Date.now() });
-    return res.ok;
-  }, []);
+    if (!moveKey || moveRef.current !== moveKey || pendingMove.current === moveKey) return null;
+    pendingMove.current = moveKey;
+    setBusyMove(moveKey);
+    try {
+      const res = await fn();
+      if (!res.ok && moveRef.current === moveKey) setToast({ error: res, key: Date.now() });
+      return res.ok;
+    } finally {
+      if (pendingMove.current === moveKey) {
+        pendingMove.current = null;
+        setBusyMove(null);
+      }
+    }
+  }, [moveKey]);
 
   const onRequest = useCallback((rank) => run(() => requestCard(rank)), [run, requestCard]);
-  const onDecide = useCallback(
-    async (accept) => {
-      const ok = await run(() => decide(accept));
-      if (ok) setLieDeyeOpen(false);
-    },
-    [run, decide]
-  );
-  const onDeclare = useCallback(() => run(declareWin), [run, declareWin]);
+  const onDecide = useCallback((accept) => run(() => decide(accept)), [run, decide]);
   const onLieDeye = useCallback(() => run(spendLieDeye), [run, spendLieDeye]);
   const onOffer = useCallback(
     async (cardId) => {
       if (!cardId) return;
-      const ok = await run(() => offerCard(cardId, touchesRef.current.slice()));
-      if (!ok) setResetNonce((n) => n + 1); // bring a thrown card back into the fan
+      const ok = await run(() => offerCard(cardId, touchesRef.current.slice(), claimNoCard));
+      if (!ok && moveRef.current === moveKey) setResetNonce((n) => n + 1);
     },
-    [run, offerCard]
+    [run, offerCard, moveKey, claimNoCard]
   );
   const onSelect = useCallback(
     (id) => {
@@ -241,15 +256,16 @@ export default function GameScreen() {
     const ids = displayHandRef.current.map((c) => c.id);
     if (ids.length < 2) return;
     const order = shuffledDifferent(ids);
+    const pendingOrder = { matchId, order };
     playSfx(SFX.CARD_SLIDE);
-    setLocalOrder(order);
+    setLocalOrder(pendingOrder);
     setShuffleNonce((n) => n + 1);
     const res = await shuffleHand(order);
-    if (!res.ok) setToast({ message: `⚠️ ${res.error}`, key: Date.now() });
+    if (!res.ok && matchRef.current === matchId) setToast({ error: res, key: Date.now() });
     // The server's game_state (emitted before the ack) now carries the order;
     // drop the local override only if nothing newer replaced it meanwhile.
-    setLocalOrder((cur) => (cur === order ? null : cur));
-  }, [shuffleHand, playSfx]);
+    setLocalOrder((cur) => (cur === pendingOrder ? null : cur));
+  }, [shuffleHand, playSfx, matchId]);
 
   // Anti-spy: flip my whole hand face-down in place (local only).
   const onToggleConceal = useCallback(() => {
@@ -262,25 +278,30 @@ export default function GameScreen() {
 
   const confirmLeave = () =>
     Alert.alert(
-      'Leave game?',
-      finished
-        ? 'You will leave this lobby.'
-        : 'Leaving ends the match for EVERYONE and sends the table back to the lobby.',
+      t('game.leaveTitle'),
+      t(finished ? 'game.leaveFinished' : 'game.leaveMid'),
       [
-        { text: 'Stay', style: 'cancel' },
-        { text: 'Leave', style: 'destructive', onPress: leaveRoom },
+        { text: t('game.stay'), style: 'cancel' },
+        {
+          text: t('game.leave'),
+          style: 'destructive',
+          onPress: async () => {
+            const res = await leaveRoom();
+            if (!res.ok) setToast({ error: res, key: Date.now() });
+          },
+        },
       ]
     );
 
   const confirmEnd = () =>
-    Alert.alert('End game for everyone?', 'The match stops now and all players return to the lobby.', [
-      { text: 'Keep playing', style: 'cancel' },
+    Alert.alert(t('game.endTitle'), t('game.endBody'), [
+      { text: t('game.keepPlaying'), style: 'cancel' },
       {
-        text: 'End game',
+        text: t('game.endGame'),
         style: 'destructive',
         onPress: async () => {
           const res = await endGame();
-          if (!res.ok) setToast({ message: `⚠️ ${res.error}`, key: Date.now() });
+          if (!res.ok) setToast({ error: res, key: Date.now() });
         },
       },
     ]);
@@ -290,7 +311,7 @@ export default function GameScreen() {
       <View style={styles.root}>
         <PlayfulBackground colors={gradients.game} />
         <SafeAreaView style={[styles.safe, styles.loading]} edges={['top', 'bottom', 'left', 'right']}>
-          <Text style={styles.loadingText}>Shuffling… 🃏</Text>
+          <Text style={[styles.loadingText, textStyle]}>{t('game.loading')}</Text>
         </SafeAreaView>
       </View>
     );
@@ -307,12 +328,12 @@ export default function GameScreen() {
   const tight = r.compact || (crowded && r.tier !== 'tall');
 
   const timerLabel = finished
-    ? 'Round over'
+    ? t('timer.over')
     : game.phase === PHASES.REQUEST
-    ? `${nameOf(game.activeId)} is asking`
+    ? t('timer.asking', { name: nameOf(game.activeId) })
     : game.phase === PHASES.OFFER
-    ? `${nameOf(game.holderId)} is offering`
-    : `${nameOf(game.activeId)} is deciding`;
+    ? t('timer.offering', { name: nameOf(game.holderId) })
+    : t('timer.deciding', { name: nameOf(game.activeId) });
 
   const renderSeat = (seat) => {
     const inTransaction = seat.id === game.holderId || seat.id === game.activeId;
@@ -338,21 +359,23 @@ export default function GameScreen() {
       <IsolationOverlay active={isolated} />
 
       {/* All four edges: clears the notch / Dynamic Island, the home indicator and landscape cut-outs */}
-      <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
+      <SafeAreaView pointerEvents="box-none" style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         {/* Header: Leave (everyone) · room chip · End (host) · space for the audio toggle */}
         <View style={styles.header}>
-          <Pressable onPress={confirmLeave} style={styles.iconBtn} hitSlop={8} accessibilityLabel="Leave game">
+          <Pressable onPress={confirmLeave} style={styles.iconBtn} hitSlop={8} accessibilityLabel={t('game.a11yLeave')}>
             <Ionicons name="exit-outline" size={22} color={colors.night} />
           </Pressable>
           <View style={styles.headerChip}>
-            <Text style={styles.headerChipText} numberOfLines={1}>
-              {room.code} · Turn {game.turn} · {game.deckSize} cards
+            <Text style={styles.headerChipText} numberOfLines={1} adjustsFontSizeToFit>{room.code}</Text>
+            <Text style={[styles.headerChipText, styles.headerDetails, textStyle]} numberOfLines={1} adjustsFontSizeToFit>
+              {t('game.headerDetails', { turn: game.turn, cards: game.deckSize })}
             </Text>
           </View>
+          <LanguageToggle compact />
           {isHost && !finished ? (
-            <Pressable onPress={confirmEnd} style={styles.endBtn} hitSlop={6} accessibilityLabel="End game for everyone">
+            <Pressable onPress={confirmEnd} style={styles.endBtn} hitSlop={6} accessibilityLabel={t('game.a11yEnd')}>
               <Ionicons name="stop-circle" size={16} color={colors.white} />
-              <Text style={styles.endText}>End</Text>
+              {r.availW >= 365 && <Text style={[styles.endText, textStyle]}>{t('game.end')}</Text>}
             </Pressable>
           ) : null}
           <View style={{ width: AUDIO_TOGGLE_SIZE }} />
@@ -370,7 +393,7 @@ export default function GameScreen() {
         </View>
 
         <View style={styles.toastAnchor}>
-          <GameToast message={toast.message} eventKey={toast.key} />
+          <GameToast message={toast?.error ? `⚠️ ${tError(toast.error)}` : describeEvent(toast?.event, nameOf, playerId, t)} eventKey={toast?.key} />
         </View>
 
         {/* Opponents (top) */}
@@ -392,7 +415,7 @@ export default function GameScreen() {
           <View style={[styles.sideCol, { gap: r.gap }]}>{right.map(renderSeat)}</View>
         </View>
 
-        <View style={[styles.bottom, { gap: tight ? 4 : 8 }]}>
+        <View pointerEvents="box-none" style={[styles.bottom, { gap: tight ? 4 : 8 }]}>
           {!finished && (
             <ActionPanel
               game={game}
@@ -402,6 +425,8 @@ export default function GameScreen() {
               busy={busy}
               onRequest={onRequest}
               onOffer={onOffer}
+              claimNoCard={claimNoCard}
+              onToggleNoCard={() => setClaimMove(claimNoCard ? null : moveKey)}
               onDecide={onDecide}
               onLieDeye={onLieDeye}
               onOpenLieDeye={() => setLieDeyeOpen(true)}
@@ -409,24 +434,21 @@ export default function GameScreen() {
             />
           )}
 
-          {/* When the hand is hidden, a big gold banner would tip off onlookers - use a discreet icon instead. */}
-          {game.canDeclare && !concealed && <DeclareButton onPress={onDeclare} busy={busy} compact={tight} />}
-
           {/* My seat + hand tools + fanned hand */}
-          <View style={styles.handArea}>
+          <View pointerEvents="box-none" style={styles.handArea}>
             <View style={styles.meRow}>
               <View style={styles.meInfo}>
                 <Avatar avatarId={me?.avatarId ?? 0} size={30} ring={myRole ? colors.yellow : colors.night} />
-                <Text style={styles.meName}>You</Text>
+                <Text style={[styles.meName, textStyle]}>{t('common.you')}</Text>
                 {!!myRole && (
                   <View style={[styles.meRole, { backgroundColor: myRole === 'GIVER' ? colors.pink : colors.teal }]}>
-                    <Text style={styles.meRoleText}>{myRole}</Text>
+                    <Text style={[styles.meRoleText, textStyle]}>{t(`role.${myRole}`)}</Text>
                   </View>
                 )}
                 {isolated && (
                   <View style={styles.meMuted}>
                     <Ionicons name="volume-mute" size={12} color={colors.white} />
-                    <Text style={styles.meRoleText}>MUTED</Text>
+                    <Text style={[styles.meRoleText, textStyle]}>{t('role.muted')}</Text>
                   </View>
                 )}
                 {!!mySeat && (
@@ -436,18 +458,15 @@ export default function GameScreen() {
                 )}
               </View>
               <View style={styles.tools}>
-                {game.canDeclare && concealed && (
-                  <ToolButton icon="trophy" onPress={onDeclare} accessibilityLabel="Reveal four of a kind" active />
-                )}
                 <ToolButton
                   icon={concealed ? 'eye-off' : 'eye'}
-                  label={concealed ? 'Hidden' : 'Hide'}
+                  label={t(concealed ? 'tools.hidden' : 'tools.hide')}
                   active={concealed}
                   onPress={onToggleConceal}
-                  accessibilityLabel={concealed ? 'Show my cards' : 'Hide my cards (anti-spy)'}
+                  accessibilityLabel={t(concealed ? 'tools.a11yShow' : 'tools.a11yHide')}
                 />
                 {!finished && (
-                  <ToolButton icon="shuffle" label={r.availW >= 375 ? 'Shuffle' : null} onPress={onShuffle} accessibilityLabel="Shuffle my hand" />
+                  <ToolButton icon="shuffle" label={r.availW >= 375 ? t('tools.shuffle') : null} onPress={onShuffle} accessibilityLabel={t('tools.a11yShuffle')} />
                 )}
               </View>
             </View>
@@ -463,7 +482,7 @@ export default function GameScreen() {
               onTouchSample={recording ? onTouchSample : undefined}
               newCardId={newCardId}
               concealed={concealed}
-              resetNonce={resetNonce}
+              resetKey={`${moveKey}:${resetNonce}`}
               size={r.handCard}
               width={r.availW}
             />
@@ -485,9 +504,12 @@ export default function GameScreen() {
       />
 
       <GameOverModal
+        key={matchId}
         visible={finished}
         result={game.result}
-        players={room.players.length ? room.players : Object.entries(knownPlayers).map(([id, p]) => ({ id, ...p }))}
+        lastTransfer={game.lastTransfer}
+        economy={room.lieDeye}
+        players={game.seats.map(({ id }) => playersById[id] ?? { id, ...knownPlayers[id] })}
         seats={game.seats}
         myId={playerId}
         isHost={isHost}
@@ -517,13 +539,15 @@ const styles = StyleSheet.create({
     ...cartoonShadow,
   },
   headerChip: {
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
     backgroundColor: 'rgba(255,255,255,0.15)',
     borderRadius: 16,
-    paddingHorizontal: 12,
+    paddingHorizontal: 5,
     paddingVertical: 6,
   },
-  headerChipText: { fontFamily: fonts.bold, color: colors.white, fontSize: 13, letterSpacing: 0.5 },
+  headerChipText: { fontFamily: fonts.bold, color: colors.white, fontSize: 13, textAlign: 'center' },
+  headerDetails: { fontSize: 11 },
   endBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -544,7 +568,6 @@ const styles = StyleSheet.create({
   sideCol: { justifyContent: 'center' },
   tableWrap: { flex: 1, justifyContent: 'center' },
   bottom: {},
-  declareWrap: { paddingHorizontal: 24 },
   handArea: { position: 'relative', paddingHorizontal: 12 },
   meRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, paddingHorizontal: 4 },
   meInfo: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1 },

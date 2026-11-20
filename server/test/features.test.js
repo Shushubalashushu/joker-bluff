@@ -4,8 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { JokerBluffGame } = require('../src/game/JokerBluffGame');
+const { findWinningRank } = require('../src/game/deck');
 const { sanitizeTouches } = require('../src/game/telemetry');
 const { Room } = require('../src/rooms/Room');
+const { RoomManager } = require('../src/rooms/RoomManager');
 const { SessionStore } = require('../src/sessions/SessionStore');
 
 const ids = (n) => Array.from({ length: n }, (_, i) => `p${i}`);
@@ -32,11 +34,17 @@ function toDecision(g, touches) {
   return slot;
 }
 
-/** Plays plain accept-the-first-card transactions until `pid` is the active (asking) player. */
+function nonWinningOffer(g) {
+  const hand = g.hands.get(g.holderId);
+  const owned = [...hand, ...g.offers.map((offer) => offer.card)];
+  return hand.find((card) => !findWinningRank(owned.filter((other) => other !== card))).id;
+}
+
+/** Plays transactions without ending the match until `pid` is the active player. */
 function cycleTo(g, pid) {
   for (let guard = 0; g.activeId !== pid && guard < 20; guard++) {
     g.requestCard(g.activeId, g.ranks[0]);
-    g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
+    g.offerCard(g.holderId, nonWinningOffer(g));
     g.decide(g.activeId, true);
   }
   assert.equal(g.activeId, pid);
@@ -182,7 +190,7 @@ test('lie deye: max 3 uses per match even with a bigger balance (LIE_DEYE_LIMIT)
   g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {});
   g.useLieDeye(me);
   g.decide(me, false);
-  g.offerCard(g.holderId, g.hands.get(g.holderId)[0].id, {}); // forced -> transfer
+  g.offerCard(g.holderId, nonWinningOffer(g)); // forced -> transfer
 
   // Round the table until I'm asking again.
   cycleTo(g, me);
@@ -356,6 +364,47 @@ test('room: disconnect keeps the seat during the grace period, reconnect cancels
   room.destroy();
 });
 
+test('room: waiting seats stay reserved during reconnect and cannot fill the start roster offline', () => {
+  const { room, players } = makeRoom(4);
+  const offline = players[1];
+  offline.socketId = null;
+  room.onPlayerDisconnected(offline.playerId);
+  assert.equal(room.graceTimers.has(offline.playerId), true);
+  assert.throws(() => room.startGame(players[0].playerId), { code: 'PLAYERS_OFFLINE' });
+
+  offline.socketId = 'sock1b';
+  room.addPlayer(offline);
+  room.startGame(players[0].playerId);
+  assert.equal(room.graceTimers.size, 0);
+  assert.equal(room.status, 'playing');
+  room.destroy();
+});
+
+test('room switch: failed admission preserves the current match, seat, and profile', () => {
+  const sessions = new SessionStore();
+  const noop = () => {};
+  const transport = { toRoom: noop, toPlayer: noop, joinChannel: noop, leaveChannel: noop };
+  const rooms = new RoomManager({ sessions, transport });
+  const connectGuest = (i) => Object.assign(sessions.create(), { nickname: `P${i}`, socketId: `sock${i}` });
+  const host = connectGuest(0);
+  const current = rooms.createRoom(host);
+  for (let i = 1; i < 4; i += 1) rooms.joinRoom(connectGuest(i), current.code);
+  current.startGame(host.playerId);
+
+  const destinationHost = connectGuest(10);
+  const destination = rooms.createRoom(destinationHost);
+  for (let i = 11; i < 14; i += 1) rooms.joinRoom(connectGuest(i), destination.code);
+  destination.startGame(destinationHost.playerId);
+
+  assert.throws(() => rooms.joinRoom(host, destination.code, { nickname: 'New name' }), { code: 'IN_PROGRESS' });
+  assert.equal(current.status, 'playing');
+  assert.equal(host.roomCode, current.code);
+  assert.equal(host.nickname, 'P0');
+  assert.equal(current.hasPlayer(host.playerId), true);
+  current.destroy();
+  destination.destroy();
+});
+
 // ------------------------------------------------------------------ Room: Lie Deye economy
 
 test('room economy: unused tokens carry over to the next game (spent ones stay spent)', () => {
@@ -401,7 +450,8 @@ test('room economy: the winner gets +1 token for the next game, paid exactly onc
   room.onConnectionChanged();
   assert.equal(room.tokenBank.get(winner), 5, 'no double payout');
 
-  room.startGame(players[0].playerId); // play again
+  assert.throws(() => room.startGame(players[0].playerId), { code: 'REMATCH_REQUIRED' });
+  room.startGame(players[0].playerId, { rematch: true });
   assert.equal(room.game.getStateFor(winner).lieDeyeWallet.balance, 5);
   assert.equal(room.game.getStateFor(winner).lieDeyeWallet.usesLeft, 3, 'still capped at 3 per game');
   room.destroy();
@@ -434,7 +484,7 @@ test('room: Shuffle Hand ignores the phase deadline and only updates the shuffle
 
 // ------------------------------------------------------------------ device-testing fixes
 
-test('room: a match needs at least 4 players (start and play-again are refused below that)', () => {
+test('room: a match needs at least 4 players and a waiting lobby cannot play a rematch', () => {
   const sessions = new SessionStore();
   const transport = { toRoom: () => {}, toPlayer: () => {} };
   const room = new Room({ code: 'MINPL', sessions, transport });
@@ -451,6 +501,7 @@ test('room: a match needs at least 4 players (start and play-again are refused b
   add(2);
   assert.equal(room.publicState().minPlayers, 4);
   assert.throws(() => room.startGame(host.playerId), { code: 'NOT_ENOUGH_PLAYERS' });
+  assert.throws(() => room.startGame(host.playerId, { rematch: true }), { code: 'NOT_FINISHED' });
   assert.equal(room.status, 'waiting');
   add(3);
   room.startGame(host.playerId);

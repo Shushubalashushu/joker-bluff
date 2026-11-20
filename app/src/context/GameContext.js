@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
 import { C2S, S2C } from '../constants/events';
-import { createSocket, destroySocket, emitAck, getLastConnectError, measureClockOffset, reconnectNow } from '../services/socket';
+import { createSocket, destroySocket, emitAck, measureClockOffset, reconnectNow } from '../services/socket';
 import { useProfile } from './ProfileContext';
 
 const GameContext = createContext(null);
@@ -12,17 +12,19 @@ const initialState = {
   room: null, // public lobby state (same for everyone)
   game: null, // MY redacted view of the game (server decides what I can see)
   clockOffset: 0, // serverNow - Date.now()
-  lastEvent: null, // most recent public game event (for toasts / animations)
+  events: [], // public events emitted together for one server state update
   notice: null, // sticky message for the lobby, e.g. "Bob left - match ended"
   knownPlayers: {}, // id -> {nickname, avatarId}: keeps names of players who already left
   concealed: false, // Anti-spy: my hand is flipped face-down (local only, never sent)
 };
 
-function rememberPlayers(known, room) {
-  if (!room?.players?.length) return known;
-  const next = { ...known };
-  for (const p of room.players) next[p.id] = { nickname: p.nickname, avatarId: p.avatarId };
-  return next;
+function rememberPlayers(known, room, game) {
+  const players = {};
+  for (const p of room?.players ?? []) players[p.id] = { nickname: p.nickname, avatarId: p.avatarId };
+  for (const { id } of game?.seats ?? []) {
+    if (!players[id] && known[id]) players[id] = known[id];
+  }
+  return players;
 }
 
 function reducer(state, action) {
@@ -34,26 +36,32 @@ function reducer(state, action) {
         connectError: action.value === 'online' ? null : action.error ?? state.connectError,
       };
     case 'session':
+      if (state.playerId && state.playerId !== action.playerId) {
+        return { ...initialState, connection: state.connection, playerId: action.playerId, concealed: state.concealed };
+      }
       return { ...state, playerId: action.playerId };
-    case 'room':
+    case 'room': {
+      const room = action.room;
+      const sameRoom = room && room.code === state.room?.code;
+      const game = sameRoom && state.game?.matchId === room.lifecycleId ? state.game : null;
+      const started = action.events.some((e) => e.type === 'game_started');
+      const aborted = action.events.find((e) => e.type === 'game_aborted');
       return {
         ...state,
-        room: action.room,
-        game: action.room ? state.game : null,
-        notice: action.room ? state.notice : null,
-        knownPlayers: rememberPlayers(state.knownPlayers, action.room),
+        room,
+        game,
+        events: action.events.length ? action.events : sameRoom ? state.events : [],
+        notice: aborted ? { ...aborted, id: `${aborted.type}-${aborted.at}` } : sameRoom && !started ? state.notice : null,
+        knownPlayers: rememberPlayers(state.knownPlayers, room, game),
       };
-    case 'game':
-      return { ...state, game: action.game };
+    }
+    case 'game': {
+      const game = action.game;
+      if (game && game.matchId !== state.room?.lifecycleId) return state;
+      return { ...state, game, knownPlayers: rememberPlayers(state.knownPlayers, state.room, game) };
+    }
     case 'clock':
       return { ...state, clockOffset: action.offset };
-    case 'event': {
-      const e = action.event;
-      const next = { ...state, lastEvent: e };
-      if (e?.type === 'game_aborted') next.notice = { ...e, id: `${e.type}-${e.at}` };
-      if (e?.type === 'game_started') next.notice = null;
-      return next;
-    }
     case 'clearNotice':
       return { ...state, notice: null };
     case 'concealed':
@@ -86,21 +94,27 @@ export function GameProvider({ children }) {
     }));
 
     socket.on('connect', async () => {
+      const socketId = socket.id;
       dispatch({ type: 'connection', value: 'online' });
-      dispatch({ type: 'clock', offset: await measureClockOffset() });
+      const offset = await measureClockOffset();
+      if (socket.id === socketId) dispatch({ type: 'clock', offset });
     });
-    socket.on('disconnect', () => dispatch({ type: 'connection', value: 'offline' }));
+    const pendingEvents = [];
+    socket.on('disconnect', () => {
+      pendingEvents.length = 0;
+      dispatch({ type: 'connection', value: 'offline' });
+    });
     socket.on('connect_error', (err) =>
-      dispatch({ type: 'connection', value: 'offline', error: err?.message || getLastConnectError() })
+      dispatch({ type: 'connection', value: 'offline', error: { code: err?.data?.code || 'CONNECT_FAILED' } })
     );
 
     socket.on(S2C.SESSION, (s) => {
       profileRef.current.setToken(s.token);
       dispatch({ type: 'session', playerId: s.playerId });
     });
-    socket.on(S2C.ROOM_STATE, (room) => dispatch({ type: 'room', room }));
+    socket.on(S2C.ROOM_STATE, (room) => dispatch({ type: 'room', room, events: pendingEvents.splice(0) }));
     socket.on(S2C.GAME_STATE, (game) => dispatch({ type: 'game', game }));
-    socket.on(S2C.GAME_EVENT, (event) => dispatch({ type: 'event', event }));
+    socket.on(S2C.GAME_EVENT, (event) => pendingEvents.push(event));
 
     socket.connect();
     return () => destroySocket();
@@ -116,31 +130,35 @@ export function GameProvider({ children }) {
   }, [profile.nickname, profile.avatarId, state.room?.code, state.connection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const profilePayload = () => ({ nickname: profileRef.current.nickname, avatarId: profileRef.current.avatarId });
+  const code = state.room?.code;
+  const lifecycleId = state.room?.lifecycleId;
+  const matchId = state.game?.matchId;
+  const step = state.game?.step;
 
   const createRoom = useCallback(() => emitAck(C2S.CREATE_ROOM, profilePayload()), []);
-  const joinRoom = useCallback((code) => emitAck(C2S.JOIN_ROOM, { ...profilePayload(), code }), []);
-  const leaveRoom = useCallback(() => emitAck(C2S.LEAVE_ROOM), []);
-  const startGame = useCallback(() => emitAck(C2S.START_GAME), []);
-  const playAgain = useCallback(() => emitAck(C2S.PLAY_AGAIN), []);
-  const endGame = useCallback(() => emitAck(C2S.END_GAME), []);
-  const requestCard = useCallback((rank) => emitAck(C2S.REQUEST_CARD, { rank }), []);
+  const joinRoom = useCallback((roomCode) => emitAck(C2S.JOIN_ROOM, { ...profilePayload(), code: roomCode }), []);
+  const leaveRoom = useCallback(() => emitAck(C2S.LEAVE_ROOM, { code }), [code]);
+  const startGame = useCallback(() => emitAck(C2S.START_GAME, { lifecycleId }), [lifecycleId]);
+  const playAgain = useCallback(() => emitAck(C2S.PLAY_AGAIN, { lifecycleId }), [lifecycleId]);
+  const endGame = useCallback(() => emitAck(C2S.END_GAME, { lifecycleId }), [lifecycleId]);
+  const requestCard = useCallback((rank) => emitAck(C2S.REQUEST_CARD, { matchId, step, rank }), [matchId, step]);
   /**
    * `touches` = my touch trail while choosing (Lie Deye telemetry for the receiver).
    * `noCard`  = "I don't have it" (System Verified Forced Bluff) - the server checks it.
    */
   const offerCard = useCallback(
     (cardId, touches = [], noCard = false) =>
-      emitAck(C2S.OFFER_CARD, noCard ? { cardId, touches, noCard: true } : { cardId, touches }),
-    []
+      emitAck(C2S.OFFER_CARD, { matchId, step, cardId, touches, noCard }),
+    [matchId, step]
   );
-  const decide = useCallback((accept) => emitAck(C2S.PLAYER_DECISION, { accept }), []);
+  const decide = useCallback((accept) => emitAck(C2S.PLAYER_DECISION, { matchId, step, accept }), [matchId, step]);
   // Not called `useLieDeye` on purpose: the `use` prefix is reserved for React hooks.
-  const spendLieDeye = useCallback(() => emitAck(C2S.USE_LIE_DEYE), []);
+  const spendLieDeye = useCallback(() => emitAck(C2S.USE_LIE_DEYE, { matchId, step }), [matchId, step]);
   // `order` (optional) = client-proposed permutation of hand card ids; the server
   // validates it (falls back to its own random shuffle) and acks { order }.
   const shuffleHand = useCallback(
-    (order) => emitAck(C2S.SHUFFLE_HAND, Array.isArray(order) ? { order } : {}),
-    []
+    (order) => emitAck(C2S.SHUFFLE_HAND, { matchId, order }),
+    [matchId]
   );
   // (No declareWin: the server ends the game automatically when someone passes
   // their 5th card away and is left with 4 of a kind.)

@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const config = require('../config');
 
 /**
  * In-memory guest sessions (no auth, no DB).
@@ -18,6 +19,7 @@ class SessionStore {
   }
 
   create() {
+    if (this.size >= config.MAX_SESSIONS) return null;
     const session = {
       token: crypto.randomBytes(24).toString('base64url'),
       playerId: `p_${crypto.randomBytes(8).toString('hex')}`,
