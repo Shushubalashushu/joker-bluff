@@ -5,22 +5,30 @@ const { C2S, S2C } = require('../shared/events');
 const { GameError } = require('../game/JokerBluffGame');
 const { MAX_INPUT_SAMPLES } = require('../game/telemetry');
 const { sanitizeNickname, isAvatarId, sanitizeRoomCode } = require('../utils/sanitize');
+const { containsProfanity } = require('../utils/profanityFilter');
 const { createRateLimiter } = require('../utils/rateLimit');
 
 // (No `declare_win`: victory is automatic, see JokerBluffGame#_checkAutoWin.)
 const GAME_ACTIONS = [C2S.REQUEST_CARD, C2S.OFFER_CARD, C2S.PLAYER_DECISION, C2S.USE_LIE_DEYE];
 
 const CARD_ID = /^c_[0-9a-f]{12}$/;
+const PLAYER_ID = /^p_[0-9a-f]{16}$/;
 const SESSION_TOKEN = /^[A-Za-z0-9_-]{32}$/;
 const isObject = (value) => value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
 
-function readProfile(payload) {
+function readProfile(payload, { auth = false, requireNickname = false } = {}) {
   const profile = {};
   if (payload.nickname !== undefined) {
     if (typeof payload.nickname !== 'string' || payload.nickname.length > 128) {
       throw new GameError('BAD_PAYLOAD', 'Invalid nickname');
     }
-    profile.nickname = sanitizeNickname(payload.nickname);
+    const nickname = sanitizeNickname(payload.nickname, { fallback: !requireNickname });
+    if (!nickname) throw new GameError('NICKNAME_REQUIRED', 'Choose a nickname');
+    if (!containsProfanity(nickname)) {
+      profile.nickname = nickname;
+    } else if (!auth) {
+      throw new GameError('NICKNAME_PROFANITY', 'Choose a nickname without offensive language');
+    }
   }
   if (payload.avatarId !== undefined) {
     if (!isAvatarId(payload.avatarId)) throw new GameError('BAD_PAYLOAD', 'Invalid avatar');
@@ -54,9 +62,11 @@ function registerSocketHandlers(io, { sessions, rooms }) {
       if (!isObject(auth) || (auth.token != null && (typeof auth.token !== 'string' || !SESSION_TOKEN.test(auth.token)))) {
         throw new GameError('BAD_PAYLOAD', 'Invalid guest session');
       }
-      const profile = readProfile(auth);
+      const profile = readProfile(auth, { auth: true });
       const session = sessions.getByToken(auth.token) || sessions.create();
       if (!session) throw new GameError('SERVER_BUSY', 'Server is busy, try again');
+      // A seated guest's approved nickname survives reconnects and stale local profile data.
+      if (session.roomCode) delete profile.nickname;
       Object.assign(session, profile);
       if (!session.nickname) session.nickname = sanitizeNickname('');
       socket.data.session = session;
@@ -139,8 +149,11 @@ function registerSocketHandlers(io, { sessions, rooms }) {
     on(C2S.TIME_SYNC, () => ({ serverNow: Date.now() }));
 
     on(C2S.UPDATE_PROFILE, (p) => {
-      Object.assign(session, readProfile(p));
-      if (session.roomCode) rooms.get(session.roomCode)?.updateProfile(session);
+      const scoped = p.lifecycleId !== undefined;
+      const room = scoped ? currentRoom(p.lifecycleId ?? null) : rooms.get(session.roomCode);
+      const profile = readProfile(p, { requireNickname: scoped });
+      if (room) room.updateProfile(session, profile);
+      else Object.assign(session, profile);
       return { nickname: session.nickname, avatarId: session.avatarId };
     });
 
@@ -162,6 +175,11 @@ function registerSocketHandlers(io, { sessions, rooms }) {
     on(C2S.LEAVE_ROOM, (p) => {
       if (currentRoom().code !== p.code) throw new GameError('STALE_ACTION', 'The lobby has changed');
       rooms.leaveRoom(session);
+    });
+
+    on(C2S.KICK_PLAYER, (p) => {
+      if (typeof p.playerId !== 'string' || !PLAYER_ID.test(p.playerId)) throw new GameError('BAD_PAYLOAD', 'Invalid player');
+      rooms.kickPlayer(currentRoom(p.lifecycleId ?? null), session.playerId, p.playerId);
     });
 
     on(C2S.START_GAME, (p) => {

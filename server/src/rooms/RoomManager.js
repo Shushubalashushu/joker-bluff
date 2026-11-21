@@ -42,10 +42,11 @@ class RoomManager {
     return room;
   }
 
-  joinRoom(session, code, profile) {
+  joinRoom(session, code, profile = {}) {
     const room = this.get(code);
     if (!room) throw new GameError('ROOM_NOT_FOUND', 'No lobby with that code');
     room.assertCanSeat(session.playerId);
+    room.assertCanUpdateProfile(session, profile);
     if (session.roomCode && session.roomCode !== code) this.leaveRoom(session);
     Object.assign(session, profile);
     this._seat(session, room);
@@ -61,6 +62,12 @@ class RoomManager {
     this.transport.toPlayer(session.playerId, S2C.ROOM_STATE, null);
     this.transport.toPlayer(session.playerId, S2C.GAME_STATE, null);
     if (room.isEmpty) this._delete(room);
+  }
+
+  kickPlayer(room, hostId, playerId) {
+    room.assertCanKick(hostId, playerId);
+    this.leaveRoom(this.sessions.getByPlayerId(playerId));
+    this.transport.toPlayer(playerId, S2C.ROOM_KICKED);
   }
 
   /** Re-attaches a reconnecting socket to the room it was seated in. */

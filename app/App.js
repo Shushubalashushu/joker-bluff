@@ -33,7 +33,7 @@ function Router() {
   return (
     <Animated.View key={screen} entering={FadeIn.duration(250)} exiting={FadeOut.duration(150)} style={styles.fill}>
       {screen === 'lobby' && <LobbyScreen />}
-      {screen === 'waiting' && <WaitingRoomScreen />}
+      {screen === 'waiting' && <WaitingRoomScreen key={room.lifecycleId} />}
       {screen === 'game' && <GameScreen />}
     </Animated.View>
   );

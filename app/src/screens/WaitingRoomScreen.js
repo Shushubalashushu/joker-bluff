@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import PlayfulBackground from '../components/common/PlayfulBackground';
 import CartoonButton from '../components/common/CartoonButton';
 import Avatar from '../components/common/Avatar';
+import LobbyActionModal from '../components/lobby/LobbyActionModal';
 import { AUDIO_TOGGLE_SIZE } from '../components/AudioToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import { useI18n } from '../i18n';
@@ -20,11 +21,23 @@ import { viewport, verticalScrollProps } from '../theme/layout';
 const DISABLED_GRADIENT = ['#C9C3D9', '#A59DBB'];
 const DISABLED_LIP = '#7E7696';
 
-function PlayerTile({ player, isMe, avatarSize }) {
+function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
   const { t, textStyle } = useI18n();
   return (
     <Animated.View entering={ZoomIn.springify()} style={[styles.tile, isMe && styles.tileMe]}>
       {player.isHost && <Text style={styles.crown}>👑</Text>}
+      {onAction && (
+        <Pressable
+          onPress={onAction}
+          disabled={actionDisabled}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: actionDisabled }}
+          accessibilityLabel={t(isMe ? 'waiting.editNickname' : 'waiting.kickPlayer', { name: player.nickname })}
+          style={[styles.tileAction, actionDisabled && styles.tileActionDisabled]}
+        >
+          <Ionicons name={isMe ? 'pencil-outline' : 'person-remove-outline'} size={19} color={isMe ? colors.purple : colors.red} />
+        </Pressable>
+      )}
       <Avatar avatarId={player.avatarId} size={avatarSize} style={!player.connected && { opacity: 0.4 }} />
       <View style={styles.tileNameFrame}>
         <Text style={styles.tileName} numberOfLines={1} ellipsizeMode="tail">{player.nickname}</Text>
@@ -64,11 +77,12 @@ function AbortBanner({ notice, playerId, onClose }) {
 }
 
 export default function WaitingRoomScreen() {
-  const { room, playerId, connection, startGame, leaveRoom, notice, clearNotice } = useGame();
+  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, renamePlayer, notice, clearNotice } = useGame();
   const r = useResponsive();
   const { t, tError, textStyle } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [action, setAction] = useState(null);
 
   const isHost = room.hostId === playerId;
   const players = room.players;
@@ -153,9 +167,19 @@ export default function WaitingRoomScreen() {
 
           {/* Players */}
           <View style={styles.grid}>
-            {players.map((p) => (
-              <PlayerTile key={p.id} player={p} isMe={p.id === playerId} avatarSize={avatarSize} />
-            ))}
+            {players.map((player) => {
+              const isMe = player.id === playerId;
+              return (
+                <PlayerTile
+                  key={player.id}
+                  player={player}
+                  isMe={isMe}
+                  avatarSize={avatarSize}
+                  onAction={isMe || isHost ? () => setAction({ kind: isMe ? 'rename' : 'kick', player }) : undefined}
+                  actionDisabled={busy || connection !== 'online'}
+                />
+              );
+            })}
             {Array.from({ length: Math.max(0, room.maxPlayers - n) }).map((_, i) => (
               <EmptyTile key={`e${i}`} height={avatarSize + 62} />
             ))}
@@ -191,6 +215,14 @@ export default function WaitingRoomScreen() {
           )}
         </View>
       </SafeAreaView>
+      {action && (
+        <LobbyActionModal
+          action={action}
+          online={connection === 'online'}
+          onClose={() => setAction(null)}
+          onSubmit={action.kind === 'rename' ? renamePlayer : kickPlayer}
+        />
+      )}
     </View>
   );
 }
@@ -301,6 +333,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   crown: { position: 'absolute', top: -14, fontSize: 24 },
+  tileAction: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    zIndex: 1,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tileActionDisabled: { opacity: 0.45 },
   tileNameFrame: { width: '90%', minWidth: 0, overflow: 'hidden' },
   tileName: { fontFamily: fonts.bold, fontSize: 16, color: colors.night, textAlign: 'center' },
   tileSub: { fontFamily: fonts.regular, fontSize: 12, color: colors.muted },

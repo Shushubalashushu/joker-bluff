@@ -10,6 +10,7 @@ const C2S = Object.freeze({
   CREATE_ROOM: 'create_room',
   JOIN_ROOM: 'join_room',
   LEAVE_ROOM: 'leave_room',
+  KICK_PLAYER: 'kick_player',
   UPDATE_PROFILE: 'update_profile',
   START_GAME: 'start_game',
   PLAY_AGAIN: 'play_again',
@@ -26,6 +27,7 @@ const C2S = Object.freeze({
 const S2C = Object.freeze({
   SESSION: 'session',
   ROOM_STATE: 'room_state',
+  ROOM_KICKED: 'room_kicked',
   GAME_STATE: 'game_state',
   GAME_EVENT: 'game_event',
 });

@@ -8,16 +8,17 @@ const { findWinningRank } = require('../src/game/deck');
 const config = require('../src/config');
 
 const MOVE_EVENTS = new Set(['request_card', 'offer_card', 'player_decision', 'use_lie_deye']);
-const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game']);
+const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player']);
 
 /** Small client wrapper that tracks the latest pushed state. */
 function client(url, auth = {}) {
   const socket = connect(url, { transports: ['websocket'], auth, forceNew: true, reconnection: false });
-  const c = { socket, session: null, room: undefined, game: undefined, events: [] };
+  const c = { socket, session: null, room: undefined, game: undefined, events: [], kicks: 0 };
   socket.on('session', (s) => (c.session = s));
   socket.on('room_state', (r) => (c.room = r));
   socket.on('game_state', (g) => (c.game = g));
   socket.on('game_event', (e) => c.events.push(e));
+  socket.on('room_kicked', () => c.kicks++);
   c.emit = (event, payload = {}) => {
     let scope;
     if (MOVE_EVENTS.has(event)) scope = { matchId: c.game?.matchId, step: c.game?.step };
@@ -38,6 +39,116 @@ const until = async (fn, ms = 2000) => {
   }
   throw new Error('condition not met in time');
 };
+
+async function withWaitingLobby(names, run) {
+  const server = createGameServer();
+  const clients = [];
+  try {
+    await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${server.httpServer.address().port}`;
+    const connectGuest = async (auth) => {
+      const guest = client(url, auth);
+      clients.push(guest);
+      await guest.ready;
+      return guest;
+    };
+    const seated = await Promise.all(names.map((nickname) => connectGuest({ nickname })));
+    const [host, ...guests] = seated;
+    const created = await host.emit('create_room');
+    assert.equal(created.ok, true);
+    for (const guest of guests) assert.equal((await guest.emit('join_room', { code: created.code })).ok, true);
+    await until(() => seated.every((guest) => guest.room?.players.length === names.length));
+    await run({ server, seated, code: created.code, connectGuest });
+  } finally {
+    clients.forEach(({ socket }) => socket.close());
+    await server.close();
+  }
+}
+
+test('host kick is scoped to the waiting room and clears only the removed guest', { timeout: 10000 }, () =>
+  withWaitingLobby(['Host', 'Bob', 'Cat', 'Dan', 'Eli'], async ({ server, seated, code, connectGuest }) => {
+    const [host, bob, cat] = seated;
+    const target = { playerId: bob.session.playerId };
+    assert.equal((await cat.emit('kick_player', target)).code, 'NOT_HOST');
+    assert.equal((await host.emit('kick_player', { playerId: host.session.playerId })).code, 'CANNOT_KICK_SELF');
+    assert.equal((await host.emit('kick_player', { playerId: null })).code, 'BAD_PAYLOAD');
+    assert.equal((await host.emit('kick_player', { ...target, lifecycleId: 'old-lobby' })).code, 'STALE_ACTION');
+    assert.equal(host.room.players.length, 5);
+
+    assert.equal((await host.emit('kick_player', target)).ok, true);
+    await until(() => bob.kicks === 1 && bob.room === null && bob.game === null &&
+      seated.filter((guest) => guest !== bob).every((guest) => guest.room?.players.length === 4));
+    assert.equal(cat.kicks, 0);
+    assert.equal(bob.socket.connected, true);
+    assert.equal(server.sessions.getByPlayerId(target.playerId).roomCode, null);
+    assert.equal(server.io.sockets.adapter.rooms.get(`room:${code}`).has(bob.socket.id), false);
+    assert.equal((await host.emit('kick_player', target)).code, 'PLAYER_NOT_FOUND');
+
+    bob.socket.close();
+    const back = await connectGuest({ token: bob.session.token });
+    await until(() => back.room === null && back.game === null);
+    assert.equal(back.session.playerId, target.playerId);
+
+    assert.equal((await host.emit('start_game')).ok, true);
+    await until(() => host.room.status === 'playing' && host.game);
+    assert.equal((await host.emit('kick_player', { playerId: cat.session.playerId })).code, 'IN_PROGRESS');
+    assert.equal(host.room.players.length, 4);
+  }));
+
+test('a live nickname edit updates every waiting client and survives a stale reconnect profile', { timeout: 10000 }, () =>
+  withWaitingLobby(['Host', 'Bob', 'Cat', 'Dan'], async ({ seated, code, connectGuest }) => {
+    const [host, bob, cat, dan] = seated;
+    const id = bob.session.playerId;
+    const nickname = 'שחקנית 🃏';
+    const lifecycleId = bob.room.lifecycleId;
+    assert.deepEqual(await bob.emit('update_profile', { nickname: `  ${nickname}  `, lifecycleId }), {
+      ok: true, nickname, avatarId: bob.session.avatarId,
+    });
+    await until(() => seated.every((guest) => guest.room?.players.find((player) => player.id === id)?.nickname === nickname));
+    assert.equal((await bob.emit('update_profile', { nickname: ' ', lifecycleId })).code, 'NICKNAME_REQUIRED');
+    assert.equal((await bob.emit('update_profile', { nickname: 'New', lifecycleId: 'stale' })).code, 'STALE_ACTION');
+
+    bob.socket.close();
+    await until(() => host.room.players.find((player) => player.id === id)?.connected === false);
+    const back = await connectGuest({ token: bob.session.token, nickname: 'Bob' });
+    assert.equal(back.session.nickname, nickname);
+    await until(() => [host, cat, dan, back].every((guest) =>
+      guest.room?.players.some((player) => player.id === id && player.nickname === nickname && player.connected)));
+
+    assert.equal((await host.emit('start_game')).ok, true);
+    await until(() => back.room.status === 'playing');
+    assert.equal((await back.emit('update_profile', { nickname: 'New', lifecycleId: back.room.lifecycleId })).code, 'IN_PROGRESS');
+    assert.equal((await back.emit('update_profile', { nickname: 'New' })).code, 'IN_PROGRESS');
+    assert.equal((await back.emit('join_room', { code, nickname: 'New' })).code, 'IN_PROGRESS');
+    assert.equal(host.room.players.find((player) => player.id === id).nickname, nickname);
+    assert.equal((await host.emit('end_game')).ok, true);
+    await until(() => back.room.status === 'waiting');
+    assert.equal((await back.emit('update_profile', { nickname: 'New', lifecycleId })).code, 'STALE_ACTION');
+    assert.equal((await back.emit('update_profile', { nickname: 'New', lifecycleId: back.room.lifecycleId })).ok, true);
+    await until(() => host.room.players.find((player) => player.id === id)?.nickname === 'New');
+  }));
+
+test('nickname moderation covers authentication, create, join and profile updates', { timeout: 10000 }, () =>
+  withWaitingLobby(['Host'], async ({ server, seated, code, connectGuest }) => {
+    const [host] = seated;
+    const guest = await connectGuest({ nickname: 'Ass!' });
+    assert.match(guest.session.nickname, /^Guest-\d{4}$/);
+    assert.equal((await guest.emit('join_room', { code, nickname: 'ש ר מ ו ט ה' })).code, 'NICKNAME_PROFANITY');
+    assert.equal((await host.emit('create_room', { nickname: 'f.u.u.u.c.k' })).code, 'NICKNAME_PROFANITY');
+    assert.equal(server.sessions.getByPlayerId(host.session.playerId).roomCode, code);
+    assert.equal((await guest.emit('join_room', { code, nickname: 'סקסופון' })).ok, true);
+    await until(() => guest.room?.lifecycleId && host.room?.players.length === 2);
+
+    const { lifecycleId } = guest.room;
+    const publicName = () => host.room.players.find((player) => player.id === guest.session.playerId)?.nickname;
+    assert.equal((await guest.emit('update_profile', { lifecycleId, nickname: 'ABCDEFGHIJKL Assorted' })).code, 'NICKNAME_PROFANITY');
+    assert.equal((await guest.emit('update_profile', { lifecycleId, nickname: 'Ass!' })).code, 'NICKNAME_PROFANITY');
+    assert.equal(publicName(), 'סקסופון');
+    for (const nickname of ['התחתנתי', 'grape', 'as', 'this hits', 'שמן', 'כוס', 'zain', 'לסבית']) {
+      assert.equal((await guest.emit('update_profile', { lifecycleId, nickname })).ok, true, nickname);
+      await until(() => publicName() === nickname);
+    }
+  }));
 
 test('socket flow: lobby -> game -> 3-offer rule -> redaction -> reconnect', { timeout: 15000 }, async () => {
   const server = createGameServer();

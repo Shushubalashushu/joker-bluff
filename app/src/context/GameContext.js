@@ -60,6 +60,8 @@ function reducer(state, action) {
       if (game && game.matchId !== state.room?.lifecycleId) return state;
       return { ...state, game, knownPlayers: rememberPlayers(state.knownPlayers, state.room, game) };
     }
+    case 'roomKicked':
+      return { ...state, notice: { type: 'room_kicked' } };
     case 'clock':
       return { ...state, clockOffset: action.offset };
     case 'clearNotice':
@@ -108,26 +110,24 @@ export function GameProvider({ children }) {
       dispatch({ type: 'connection', value: 'offline', error: { code: err?.data?.code || 'CONNECT_FAILED' } })
     );
 
+    let playerId;
     socket.on(S2C.SESSION, (s) => {
+      playerId = s.playerId;
       profileRef.current.setToken(s.token);
-      dispatch({ type: 'session', playerId: s.playerId });
+      dispatch({ type: 'session', playerId });
     });
-    socket.on(S2C.ROOM_STATE, (room) => dispatch({ type: 'room', room, events: pendingEvents.splice(0) }));
+    socket.on(S2C.ROOM_STATE, (room) => {
+      const ownSeat = room?.players.find((player) => player.id === playerId);
+      if (ownSeat) profileRef.current.setNickname(ownSeat.nickname);
+      dispatch({ type: 'room', room, events: pendingEvents.splice(0) });
+    });
+    socket.on(S2C.ROOM_KICKED, () => dispatch({ type: 'roomKicked' }));
     socket.on(S2C.GAME_STATE, (game) => dispatch({ type: 'game', game }));
     socket.on(S2C.GAME_EVENT, (event) => pendingEvents.push(event));
 
     socket.connect();
     return () => destroySocket();
   }, [profile.ready]);
-
-  // Keep the lobby in sync when the player edits their profile mid-lobby.
-  useEffect(() => {
-    if (!state.room || state.connection !== 'online') return undefined;
-    const t = setTimeout(() => {
-      emitAck(C2S.UPDATE_PROFILE, { nickname: profile.nickname, avatarId: profile.avatarId });
-    }, 600);
-    return () => clearTimeout(t);
-  }, [profile.nickname, profile.avatarId, state.room?.code, state.connection]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const profilePayload = () => ({ nickname: profileRef.current.nickname, avatarId: profileRef.current.avatarId });
   const code = state.room?.code;
@@ -138,6 +138,8 @@ export function GameProvider({ children }) {
   const createRoom = useCallback(() => emitAck(C2S.CREATE_ROOM, profilePayload()), []);
   const joinRoom = useCallback((roomCode) => emitAck(C2S.JOIN_ROOM, { ...profilePayload(), code: roomCode }), []);
   const leaveRoom = useCallback(() => emitAck(C2S.LEAVE_ROOM, { code }), [code]);
+  const kickPlayer = useCallback((playerId) => emitAck(C2S.KICK_PLAYER, { lifecycleId, playerId }), [lifecycleId]);
+  const renamePlayer = useCallback((nickname) => emitAck(C2S.UPDATE_PROFILE, { lifecycleId, nickname }), [lifecycleId]);
   const startGame = useCallback(() => emitAck(C2S.START_GAME, { lifecycleId }), [lifecycleId]);
   const playAgain = useCallback(() => emitAck(C2S.PLAY_AGAIN, { lifecycleId }), [lifecycleId]);
   const endGame = useCallback(() => emitAck(C2S.END_GAME, { lifecycleId }), [lifecycleId]);
@@ -172,6 +174,8 @@ export function GameProvider({ children }) {
       createRoom,
       joinRoom,
       leaveRoom,
+      kickPlayer,
+      renamePlayer,
       startGame,
       playAgain,
       endGame,
@@ -189,6 +193,8 @@ export function GameProvider({ children }) {
       createRoom,
       joinRoom,
       leaveRoom,
+      kickPlayer,
+      renamePlayer,
       startGame,
       playAgain,
       endGame,

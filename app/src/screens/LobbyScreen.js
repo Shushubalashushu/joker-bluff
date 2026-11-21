@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Keyboard, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   Easing,
   FadeInDown,
@@ -10,6 +10,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import PlayfulBackground from '../components/common/PlayfulBackground';
 import CartoonButton from '../components/common/CartoonButton';
 import ProfileCard from '../components/lobby/ProfileCard';
@@ -55,9 +56,9 @@ function Logo({ scale = 1 }) {
 
 export default function LobbyScreen() {
   const { nickname, avatarId, setNickname, setAvatarId } = useProfile();
-  const { createRoom, joinRoom } = useGame();
+  const { createRoom, joinRoom, notice, clearNotice } = useGame();
   const { playSfx } = useAudio();
-  const { t, textStyle } = useI18n();
+  const { t, textStyle, alignStart } = useI18n();
   const r = useResponsive();
   const logoScale = r.compact ? 0.78 : r.tall ? 1.08 : 0.95;
   const profileRef = useRef(null);
@@ -94,6 +95,15 @@ export default function LobbyScreen() {
             <Animated.View entering={FadeInDown.delay(50).springify()}>
               <Logo scale={logoScale} />
             </Animated.View>
+
+            {notice?.type === 'room_kicked' && (
+              <View style={styles.notice}>
+                <Text style={[styles.noticeText, alignStart]} accessibilityRole="alert">{t('lobby.kicked')}</Text>
+                <Pressable onPress={clearNotice} hitSlop={10} accessibilityRole="button" accessibilityLabel={t('common.dismiss')}>
+                  <Ionicons name="close-circle" size={22} color={colors.night} />
+                </Pressable>
+              </View>
+            )}
 
             <Animated.View entering={FadeInDown.delay(150).springify()} style={styles.profileWrap}>
               <ProfileCard
@@ -186,4 +196,15 @@ const styles = StyleSheet.create({
   btnEmoji: { fontSize: 28 },
   bigBtnText: { fontSize: 30 },
   footnote: { fontFamily: fonts.regular, color: colors.white, textAlign: 'center', opacity: 0.9, fontSize: 13 },
+  notice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 12,
+    borderWidth: 3,
+    borderRadius: 16,
+    borderColor: colors.night,
+    backgroundColor: colors.yellow,
+  },
+  noticeText: { flex: 1, fontFamily: fonts.semibold, color: colors.night, fontSize: 15 },
 });

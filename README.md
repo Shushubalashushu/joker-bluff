@@ -118,19 +118,21 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `create_room` | `{ nickname, avatarId }` → `{ code }` |
 | `join_room` | `{ code, nickname, avatarId }` |
 | `leave_room` | `{ code }` |
+| `kick_player` | `{ lifecycleId, playerId }` (host only, in the waiting room) |
 | `start_game`, `play_again`, `end_game` | `{ lifecycleId }` (host only) |
 | `request_card` | `{ matchId, step, rank }` |
 | `offer_card` | `{ matchId, step, cardId, claimedNoCard?: boolean, pressDurationMs?: number, touches?: [{ c, u, v, x, y, t }] }`. The hold duration applies to the chosen card. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), and `t` the ms since OFFER started. |
 | `player_decision` | `{ matchId, step, accept: boolean, offerIndex?: number }`. Use `offerIndex: 0` or `1` to take the first or second available offer. Omitting it accepts the latest offer. Rejecting the latest offer uses `accept: false` without an index. |
 | `use_lie_deye` | `{ matchId, step }` |
 | `shuffle_hand` | `{ matchId, order?: cardId[] }` → `{ order }`. The sender's new `game_state` is emitted before the ack. |
-| `update_profile` | `{ nickname?, avatarId? }` |
+| `update_profile` | `{ nickname?, avatarId?, lifecycleId? }` → `{ nickname, avatarId }`. The waiting room sends its `lifecycleId` when saving a nickname. |
 | `time_sync` | – → `{ serverNow }` |
 
 | Server → Client | Meaning |
 |---|---|
 | `session` | `{ token, playerId }`. The client stores `token` and sends it back in `auth` on reconnect to get its seat back. |
 | `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null` |
+| `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
 | `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
 

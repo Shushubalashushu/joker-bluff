@@ -316,6 +316,46 @@ function makeRoom(n = 4) {
   return { room, sessions, players, sent };
 }
 
+test('room: nickname edits update the seat and session only while waiting', () => {
+  const { room, players, sent } = makeRoom();
+  const [host, guest] = players;
+  room.updateProfile(guest, { nickname: 'מיקה' });
+  assert.equal(guest.nickname, 'מיקה');
+  assert.equal(room.nicknameOf(guest.playerId), 'מיקה');
+  assert.ok(sent.some(({ event, payload }) => event === 'room_state' &&
+    payload.players.some((player) => player.id === guest.playerId && player.nickname === 'מיקה')));
+
+  room.startGame(host.playerId);
+  assert.throws(() => room.updateProfile(guest, { nickname: 'Mika', avatarId: 2 }), { code: 'IN_PROGRESS' });
+  assert.equal(guest.nickname, 'מיקה');
+  assert.equal(guest.avatarId, 0);
+  assert.equal(room.nicknameOf(guest.playerId), 'מיקה');
+  room.updateProfile(guest, { avatarId: 2 });
+  assert.equal(room.publicState().players.find((player) => player.id === guest.playerId).avatarId, 2);
+  room.destroy();
+});
+
+test('room manager: kicking an offline guest clears their seat and disconnect timer', () => {
+  const sessions = new SessionStore();
+  const transport = { toRoom() {}, toPlayer() {}, joinChannel() {}, leaveChannel() {} };
+  const rooms = new RoomManager({ sessions, transport });
+  const host = Object.assign(sessions.create(), { socketId: 'host' });
+  const guest = Object.assign(sessions.create(), { socketId: 'guest' });
+  const room = rooms.createRoom(host);
+  rooms.joinRoom(guest, room.code);
+  guest.socketId = null;
+  room.onPlayerDisconnected(guest.playerId);
+  assert.ok(room.graceTimers.has(guest.playerId));
+
+  rooms.kickPlayer(room, host.playerId, guest.playerId);
+  assert.equal(guest.roomCode, null);
+  assert.equal(room.hasPlayer(guest.playerId), false);
+  assert.equal(room.graceTimers.has(guest.playerId), false);
+  assert.equal(rooms.restore(guest), null);
+  assert.equal(room.hostId, host.playerId);
+  room.destroy();
+});
+
 test('room: a player leaving mid-match terminates it and returns everyone to the lobby', () => {
   const { room, players, sent } = makeRoom(5);
   room.startGame(players[0].playerId);

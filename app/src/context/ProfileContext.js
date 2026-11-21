@@ -35,7 +35,7 @@ export function ProfileProvider({ children }) {
     if (ready) AsyncStorage.setItem(STORAGE_KEYS.profile, JSON.stringify(profile)).catch(() => {});
   }, [profile, ready]);
 
-  const setNickname = useCallback((nickname) => setProfile((p) => ({ ...p, nickname })), []);
+  const setNickname = useCallback((nickname) => setProfile((p) => (p.nickname === nickname ? p : { ...p, nickname })), []);
   const setAvatarId = useCallback((avatarId) => setProfile((p) => ({ ...p, avatarId })), []);
   const setToken = useCallback((token) => setProfile((p) => (p.token === token ? p : { ...p, token })), []);
 

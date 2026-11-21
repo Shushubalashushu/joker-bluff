@@ -105,8 +105,19 @@ class Room {
 
   assertCanSeat(playerId) {
     if (this.hasPlayer(playerId)) return;
-    if (this.status !== ROOM_STATUS.WAITING) throw new GameError('IN_PROGRESS', 'That game has already started');
+    this.assertWaiting();
     if (this.players.length >= config.MAX_PLAYERS) throw new GameError('ROOM_FULL', 'This lobby is full');
+  }
+
+  assertWaiting() {
+    if (this.status !== ROOM_STATUS.WAITING) throw new GameError('IN_PROGRESS', 'That game has already started');
+  }
+
+  assertCanKick(hostId, playerId) {
+    if (hostId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can remove players');
+    this.assertWaiting();
+    if (playerId === hostId) throw new GameError('CANNOT_KICK_SELF', 'The host cannot remove themself');
+    if (!this.hasPlayer(playerId)) throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
   }
 
   /**
@@ -132,7 +143,15 @@ class Room {
     }
   }
 
-  updateProfile(session) {
+  assertCanUpdateProfile(session, profile) {
+    if (profile.nickname !== undefined && profile.nickname !== session.nickname && this.hasPlayer(session.playerId)) {
+      this.assertWaiting();
+    }
+  }
+
+  updateProfile(session, profile) {
+    this.assertCanUpdateProfile(session, profile);
+    Object.assign(session, profile);
     const p = this.players.find((x) => x.id === session.playerId);
     if (!p) return;
     p.nickname = session.nickname;
