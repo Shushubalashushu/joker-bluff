@@ -92,7 +92,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
     <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={styles.backdrop}>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.header}>
-          <Pressable onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityLabel={t('var.hide')}>
+          <Pressable onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('var.hide')}>
             <Ionicons name="chevron-down" size={22} color={colors.night} />
           </Pressable>
           <View style={styles.headerTitle}>
@@ -147,7 +147,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
                   <View style={[styles.legendDot, { backgroundColor: heatColor(1) }]} />
                   <Text style={[styles.legendText, textStyle]}>{t('var.late')}</Text>
                 </View>
-                <Pressable onPress={() => setReplayKey((k) => k + 1)} style={styles.replay} accessibilityLabel={t('var.replayTouches')}>
+                <Pressable onPress={() => setReplayKey((k) => k + 1)} style={styles.replay} accessibilityRole="button" accessibilityLabel={t('var.replayTouches')}>
                   <Ionicons name="play" size={14} color={colors.night} />
                   <Text style={[styles.replayText, textStyle]}>{t('var.replay')}</Text>
                 </Pressable>

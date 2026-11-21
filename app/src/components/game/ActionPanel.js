@@ -90,7 +90,8 @@ function NoCardToggle({ armed, onToggle, disabled }) {
       onPress={onToggle}
       disabled={disabled}
       accessibilityRole="switch"
-      accessibilityState={{ checked: armed, disabled }}
+      aria-checked={armed}
+      aria-disabled={disabled}
       accessibilityLabel={t('nocard.a11yToggle')}
       style={({ pressed }) => [styles.noCard, armed && styles.noCardOn, pressed && styles.noCardPressed, disabled && { opacity: 0.5 }]}
     >
@@ -186,12 +187,14 @@ export default function ActionPanel({
     const claims = game.offers.filter((offer) => offer.claimedNoCard);
     content = (
       <>
-        <Text style={[styles.title, compact && styles.titleCompact, textStyle]}>
-          {t('action.offerFrom', { n: offerNumber, name: holderName })}
-          {pendingOffer?.lieDeyeUsed ? ' 👁️' : ''}
-        </Text>
+        {!(compact && offerNumber === 2) && (
+          <Text style={[styles.title, compact && styles.titleCompact, textStyle]}>
+            {t('action.offerFrom', { n: offerNumber, name: holderName })}
+            {pendingOffer?.lieDeyeUsed ? ' 👁️' : ''}
+          </Text>
+        )}
         {!!claims.length && (
-          <View style={styles.claimBox}>
+          <View style={[styles.claimBox, compact && styles.claimBoxCompact]}>
             <Text style={[styles.claimText, textStyle]}>
               {t('nocard.received', { offers: claims.map(({ number }) => number).join(' / ') })}
             </Text>
@@ -230,7 +233,11 @@ export default function ActionPanel({
     <Animated.View
       entering={FadeIn}
       key={`${game.phase}-${game.turn}-${offerNumber}`}
-      style={[styles.panel, compact && styles.panelCompact]}
+      style={[
+        styles.panel,
+        compact && styles.panelCompact,
+        compact && game.phase === PHASES.DECISION && isActive && offerNumber === 2 && styles.panelChoice,
+      ]}
     >
       {content}
     </Animated.View>
@@ -252,6 +259,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   panelCompact: { paddingVertical: 7, gap: 6, minHeight: 52, borderRadius: 18 },
+  panelChoice: { paddingVertical: 4, gap: 4 },
   title: { fontFamily: fonts.bold, fontSize: 17, color: colors.night, textAlign: 'center' },
   titleCompact: { fontSize: 15 },
   sub: { fontFamily: fonts.semibold, fontSize: 13, color: colors.muted, textAlign: 'center' },
@@ -310,6 +318,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
   },
+  claimBoxCompact: { paddingVertical: 0 },
   claimText: { fontFamily: fonts.bold, fontSize: 13, color: colors.blue, textAlign: 'center' },
   // Lie Deye
   ldRow: {

@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text } from 'react-native';
-import Animated, { FadeInDown, FadeOutUp } from 'react-native-reanimated';
+import { StyleSheet, Text, View } from 'react-native';
 import { useI18n } from '../../i18n';
 import { colors, fonts } from '../../theme';
 
@@ -16,30 +15,29 @@ export default function GameToast({ message, eventKey }) {
     return () => clearTimeout(t);
   }, [eventKey, message]);
 
-  if (!visible || !message) return null;
   return (
-    <Animated.View key={eventKey} entering={FadeInDown.springify()} exiting={FadeOutUp} pointerEvents="none" style={styles.toast}>
-      <Text style={[styles.text, textStyle]} numberOfLines={2}>
-        {message}
-      </Text>
-    </Animated.View>
+    <View pointerEvents="none" style={styles.slot}>
+      {visible && !!message && (
+        <Text style={[styles.toast, textStyle]} numberOfLines={1} accessibilityLiveRegion="polite">
+          {message}
+        </Text>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  slot: { height: 24, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 14 },
   toast: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: 0,
-    maxWidth: '90%',
+    maxWidth: '100%',
     backgroundColor: colors.night,
-    borderRadius: 18,
-    borderWidth: 3,
+    borderRadius: 12,
+    borderWidth: 2,
     borderColor: colors.yellow,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    zIndex: 60,
-    elevation: 60,
+    paddingHorizontal: 8,
+    fontFamily: fonts.bold,
+    fontSize: 12,
+    color: colors.white,
+    textAlign: 'center',
   },
-  text: { fontFamily: fonts.bold, fontSize: 14, color: colors.white, textAlign: 'center' },
 });

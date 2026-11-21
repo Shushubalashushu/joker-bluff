@@ -46,8 +46,8 @@ function Logo({ scale = 1 }) {
   return (
     <View style={styles.logo}>
       <Animated.Text style={[styles.logoEmoji, { fontSize: 64 * scale }, jokerStyle]}>🃏</Animated.Text>
-      <Text style={[styles.logoTop, big, textStyle]}>{t('lobby.logoTop')}</Text>
-      <Text style={[styles.logoBottom, big, textStyle]}>{t('lobby.logoBottom')}</Text>
+      <Text numberOfLines={1} style={[styles.logoLine, styles.logoTop, big, textStyle]}>{t('lobby.logoTop')}</Text>
+      <Text numberOfLines={1} style={[styles.logoLine, styles.logoBottom, big, textStyle]}>{t('lobby.logoBottom')}</Text>
       <Text style={[styles.tagline, textStyle]}>{t('lobby.tagline')}</Text>
     </View>
   );
@@ -156,6 +156,7 @@ const styles = StyleSheet.create({
   // paddingTop 56: the persistent audio toggle (48px) sits in the top-right corner
   content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24, gap: 28 },
   logo: { alignItems: 'center' },
+  logoLine: { width: '100%', textAlign: 'center' },
   logoEmoji: { fontSize: 64, marginBottom: -6 },
   logoTop: {
     fontFamily: fonts.bold,

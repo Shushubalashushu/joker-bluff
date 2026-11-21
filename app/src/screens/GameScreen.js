@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -24,7 +24,7 @@ import { PHASES } from '../constants/events';
 import { TOUCH_TELEMETRY } from '../config';
 import { describeEvent } from '../utils/describeEvent';
 import { colors, fonts, gradients, cartoonShadow } from '../theme';
-import { viewport } from '../theme/layout';
+import { viewport, verticalScrollProps } from '../theme/layout';
 
 const TABLE_PADDING = 4;
 const TABLE_GAP = 2;
@@ -336,12 +336,14 @@ export default function GameScreen() {
   const me = playersById[playerId];
   const mySeat = game.seats.find((s) => s.id === playerId);
   const myRole = isHolder ? 'GIVER' : playerId === game.activeId ? 'ASKER' : null;
+  const choosing = myRole === 'ASKER' && game.phase === PHASES.DECISION && game.offers.length === 2;
   const newCardId = game.lastTransfer && game.lastTransfer.turn === game.turn - 1 ? game.lastTransfer.cardId : null;
-  const seatSize = crowded ? Math.min(r.seatAvatar, 44) : r.seatAvatar;
   const sideCount = Number(left.length > 0) + Number(right.length > 0);
   const sideWidth = Math.min(78, Math.floor(r.availW / 5));
   const tableWidth = r.availW - 2 * TABLE_PADDING - sideCount * (sideWidth + TABLE_GAP);
   const tight = r.compact || (crowded && r.tier !== 'tall');
+  const compactChoice = choosing && tight;
+  const seatSize = compactChoice ? 32 : crowded ? Math.min(r.seatAvatar, 44) : r.seatAvatar;
 
   const timerLabel = finished
     ? t('timer.over')
@@ -362,7 +364,7 @@ export default function GameScreen() {
         muted={!finished && !inTransaction}
         acting={!finished && seat.id === game.actorId}
         role={finished ? null : seat.isHolder ? 'GIVER' : seat.isActive ? 'ASKER' : null}
-        compact={crowded}
+        compact={crowded || compactChoice}
         size={Math.min(seatSize, width - 22)}
         width={width}
       />
@@ -384,7 +386,7 @@ export default function GameScreen() {
           </Pressable>
           <View style={styles.headerChip}>
             <Text style={styles.headerChipText} numberOfLines={1} adjustsFontSizeToFit>{room.code}</Text>
-            <Text style={[styles.headerChipText, styles.headerDetails, textStyle]} numberOfLines={1} adjustsFontSizeToFit>
+            <Text style={[styles.headerChipText, styles.headerDetails, textStyle]}>
               {t('game.headerDetails', { turn: game.turn, cards: game.deckSize })}
             </Text>
           </View>
@@ -392,7 +394,7 @@ export default function GameScreen() {
           {isHost && !finished ? (
             <Pressable onPress={confirmEnd} style={styles.endBtn} hitSlop={6} accessibilityLabel={t('game.a11yEnd')}>
               <Ionicons name="stop-circle" size={16} color={colors.white} />
-              {r.availW >= 365 && <Text style={[styles.endText, textStyle]}>{t('game.end')}</Text>}
+              {r.availW >= 400 && <Text style={[styles.endText, textStyle]}>{t('game.end')}</Text>}
             </Pressable>
           ) : null}
           <View style={{ width: AUDIO_TOGGLE_SIZE }} />
@@ -409,105 +411,106 @@ export default function GameScreen() {
           />
         </View>
 
-        <View style={styles.toastAnchor}>
-          <GameToast message={toast?.error ? `⚠️ ${tError(toast.error)}` : describeEvent(toast?.event, nameOf, playerId, t)} eventKey={toast?.key} />
-        </View>
+        <GameToast message={toast?.error ? `⚠️ ${tError(toast.error)}` : describeEvent(toast?.event, nameOf, playerId, t)} eventKey={toast?.key} />
 
-        {/* Opponents (top) */}
-        <View style={[styles.topRow, { marginTop: tight ? 6 : 12, gap: r.gap }]}>{top.map((seat) => renderSeat(seat))}</View>
+        <ScrollView {...verticalScrollProps} style={styles.board} contentContainerStyle={styles.boardContent} showsVerticalScrollIndicator={false}>
+          {/* Opponents (top) */}
+          <View style={[styles.topRow, compactChoice && styles.topRowCompact, { gap: r.gap }]}>{top.map((seat) => renderSeat(seat))}</View>
 
-        {/* Opponents (sides) + table */}
-        <View style={styles.middle}>
-          {!!left.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{left.map((seat) => renderSeat(seat, sideWidth))}</View>}
-          <View style={styles.tableWrap}>
-            <TableArea
-              game={game}
-              nameOf={nameOf}
-              myId={playerId}
-              cardSize={r.tableCard}
-              width={tableWidth}
-              concealed={concealed}
-              compact={tight}
-            />
-          </View>
-          {!!right.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{right.map((seat) => renderSeat(seat, sideWidth))}</View>}
-        </View>
-
-        <View pointerEvents="box-none" style={[styles.bottom, { gap: tight ? 4 : 8 }]}>
-          {!finished && (
-            <ActionPanel
-              game={game}
-              myId={playerId}
-              nameOf={nameOf}
-              selectedCardId={selectedCardId}
-              busy={busy}
-              onRequest={onRequest}
-              onOffer={onOffer}
-              claimNoCard={claimNoCard}
-              onToggleNoCard={() => setClaimMove(claimNoCard ? null : moveKey)}
-              onDecide={onDecide}
-              onLieDeye={onLieDeye}
-              onOpenLieDeye={() => setLieDeyeOpen(true)}
-              compact={tight}
-            />
-          )}
-
-          {/* My seat + hand tools + fanned hand */}
-          <View pointerEvents="box-none" style={styles.handArea}>
-            <View style={styles.meRow}>
-              <View style={styles.meInfo}>
-                <Avatar avatarId={me?.avatarId ?? 0} size={30} ring={myRole ? colors.yellow : colors.night} />
-                <Text style={[styles.meName, textStyle]}>{t('common.you')}</Text>
-                {!!myRole && (
-                  <View style={[styles.meRole, { backgroundColor: myRole === 'GIVER' ? colors.pink : colors.teal }]}>
-                    <Text style={[styles.meRoleText, textStyle]}>{t(`role.${myRole}`)}</Text>
-                  </View>
-                )}
-                {isolated && (
-                  <View style={styles.meMuted}>
-                    <Ionicons name="volume-mute" size={12} color={colors.white} />
-                    <Text style={[styles.meRoleText, textStyle]}>{t('role.muted')}</Text>
-                  </View>
-                )}
-                {!!mySeat && (
-                  <View style={styles.meTokens}>
-                    <Text style={styles.meTokensText}>👁️ {mySeat.tokens}</Text>
-                  </View>
-                )}
-              </View>
-              <View style={styles.tools}>
-                <ToolButton
-                  icon={concealed ? 'eye-off' : 'eye'}
-                  label={t(concealed ? 'tools.hidden' : 'tools.hide')}
-                  active={concealed}
-                  onPress={onToggleConceal}
-                  accessibilityLabel={t(concealed ? 'tools.a11yShow' : 'tools.a11yHide')}
-                />
-                {!finished && (
-                  <ToolButton icon="shuffle" label={r.availW >= 375 ? t('tools.shuffle') : null} onPress={onShuffle} accessibilityLabel={t('tools.a11yShuffle')} />
-                )}
-              </View>
+          {/* Opponents (sides) + table */}
+          <View style={[styles.middle, compactChoice && styles.middleCompact]}>
+            {!!left.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{left.map((seat) => renderSeat(seat, sideWidth))}</View>}
+            <View style={styles.tableWrap}>
+              <TableArea
+                game={game}
+                nameOf={nameOf}
+                myId={playerId}
+                cardSize={compactChoice ? 'xs' : choosing ? 'sm' : r.tableCard}
+                width={tableWidth}
+                concealed={concealed}
+                compact={tight || choosing}
+              />
             </View>
-            <FannedHand
-              cards={displayHand}
-              shuffleNonce={shuffleNonce}
-              selectedId={selectedCardId}
-              onSelect={onSelect}
-              onDragStart={onDragStart}
-              canSelect={canOffer}
-              canDrag={canOffer}
-              onDragOffer={onOffer}
-              onTouchSample={recording ? onTouchSample : undefined}
-              onCardPress={recording ? onCardPress : undefined}
-              newCardId={newCardId}
-              concealed={concealed}
-              resetKey={`${moveKey}:${resetNonce}`}
-              size={r.handCard}
-              width={r.availW}
-            />
-            <DimLayer active={isolated} style={styles.handDim} />
+            {!!right.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{right.map((seat) => renderSeat(seat, sideWidth))}</View>}
           </View>
-        </View>
+
+          <View pointerEvents="box-none" style={[styles.bottom, { gap: tight ? 4 : 8 }]}>
+            {!finished && (
+              <ActionPanel
+                game={game}
+                myId={playerId}
+                nameOf={nameOf}
+                selectedCardId={selectedCardId}
+                busy={busy}
+                onRequest={onRequest}
+                onOffer={onOffer}
+                claimNoCard={claimNoCard}
+                onToggleNoCard={() => setClaimMove(claimNoCard ? null : moveKey)}
+                onDecide={onDecide}
+                onLieDeye={onLieDeye}
+                onOpenLieDeye={() => setLieDeyeOpen(true)}
+                compact={tight || choosing}
+              />
+            )}
+
+            {/* My seat + hand tools + fanned hand */}
+            <View pointerEvents="box-none" style={styles.handArea}>
+              <View style={styles.meRow}>
+                <View style={styles.meInfo}>
+                  <Avatar avatarId={me?.avatarId ?? 0} size={30} ring={myRole ? colors.yellow : colors.night} />
+                  <Text style={[styles.meName, textStyle]}>{t('common.you')}</Text>
+                  {!!myRole && (
+                    <View style={[styles.meRole, { backgroundColor: myRole === 'GIVER' ? colors.pink : colors.teal }]}>
+                      <Text style={[styles.meRoleText, textStyle]}>{t(`role.${myRole}`)}</Text>
+                    </View>
+                  )}
+                  {isolated && (
+                    <View style={styles.meMuted}>
+                      <Ionicons name="volume-mute" size={12} color={colors.white} />
+                      <Text style={[styles.meRoleText, textStyle]}>{t('role.muted')}</Text>
+                    </View>
+                  )}
+                  {!!mySeat && (
+                    <View style={styles.meTokens}>
+                      <Text style={styles.meTokensText}>👁️ {mySeat.tokens}</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.tools}>
+                  <ToolButton
+                    icon={concealed ? 'eye-off' : 'eye'}
+                    label={t(concealed ? 'tools.hidden' : 'tools.hide')}
+                    active={concealed}
+                    onPress={onToggleConceal}
+                    accessibilityLabel={t(concealed ? 'tools.a11yShow' : 'tools.a11yHide')}
+                  />
+                  {!finished && (
+                    <ToolButton icon="shuffle" label={r.availW >= 375 ? t('tools.shuffle') : null} onPress={onShuffle} accessibilityLabel={t('tools.a11yShuffle')} />
+                  )}
+                </View>
+              </View>
+              <FannedHand
+                cards={displayHand}
+                shuffleNonce={shuffleNonce}
+                selectedId={selectedCardId}
+                onSelect={onSelect}
+                onDragStart={onDragStart}
+                canSelect={canOffer}
+                canDrag={canOffer}
+                onDragOffer={onOffer}
+                onTouchSample={recording ? onTouchSample : undefined}
+                onCardPress={recording ? onCardPress : undefined}
+                newCardId={newCardId}
+                concealed={concealed}
+                resetKey={`${moveKey}:${resetNonce}`}
+                size={tight ? 'sm' : r.handCard}
+                width={r.availW}
+                compact={compactChoice}
+              />
+              <DimLayer active={isolated} style={styles.handDim} />
+            </View>
+          </View>
+        </ScrollView>
       </SafeAreaView>
 
       <LieDeyeOverlay
@@ -581,9 +584,12 @@ const styles = StyleSheet.create({
   },
   endText: { fontFamily: fonts.bold, color: colors.white, fontSize: 13 },
   timer: { paddingHorizontal: 14 },
-  toastAnchor: { height: 0, zIndex: 60, marginTop: 6 },
-  topRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', paddingHorizontal: 8 },
-  middle: { flex: 1, minHeight: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: TABLE_PADDING, gap: TABLE_GAP },
+  board: { flex: 1, marginTop: 2 },
+  boardContent: { flexGrow: 1 },
+  topRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', paddingHorizontal: 8, paddingTop: 12 },
+  topRowCompact: { paddingTop: 5 },
+  middle: { flexGrow: 1, flexShrink: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: TABLE_PADDING, paddingVertical: 6, gap: TABLE_GAP },
+  middleCompact: { paddingVertical: 3 },
   sideCol: { flexShrink: 0, justifyContent: 'center' },
   tableWrap: { flex: 1, minWidth: 0, justifyContent: 'center' },
   bottom: {},

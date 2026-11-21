@@ -22,12 +22,12 @@ function ClaimBadge() {
   );
 }
 
-function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, available }) {
+function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, width, available }) {
   const { t, textStyle } = useI18n();
   const s = CARD_SIZES[cardSize] || CARD_SIZES.md;
   if (!offer) {
     return (
-      <View style={[styles.slotCol, { width: s.w }]}>
+      <View style={[styles.slotCol, { width }]}>
         <View style={[styles.emptySlot, { width: s.w, height: s.h, borderRadius: s.radius }]}>
           <Text style={[styles.slotNumber, { fontSize: s.rank + 4 }]}>{number}</Text>
         </View>
@@ -39,7 +39,7 @@ function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, available })
   }
   const rejected = offer.status === 'rejected' && !available;
   return (
-    <View style={[styles.slotCol, { width: s.w }]}>
+    <View style={[styles.slotCol, { width }]}>
       <Animated.View entering={ZoomIn.springify().damping(12)} style={rejected && styles.rejectedCard}>
         {/* Holder sees their own face-down cards (unless Anti-spy is on); everyone else gets null from the server */}
         <PlayingCard card={showFace ? offer.card : null} size={cardSize} highlighted={available || offer.status === 'pending'} />
@@ -74,48 +74,52 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
   const isHolderView = myId === game.holderId;
   const choosing = myId === game.activeId && game.phase === PHASES.DECISION && game.offers.length === 2;
   const slotGap = compact || width < 235 ? 6 : 14;
-  const cardWidth = (width - 2 * (FELT_BORDER + FELT_PADDING + INNER_BORDER + INNER_PADDING + slotGap)) / game.maxOffers;
+  const feltPadding = compact ? 4 : FELT_PADDING;
+  const cardWidth = (width - 2 * (FELT_BORDER + feltPadding + INNER_BORDER + INNER_PADDING + slotGap)) / game.maxOffers;
   const fittedSize = [cardSize, 'sm', 'xs'].find((size) => CARD_SIZES[size].w <= cardWidth) ?? 'xs';
+  const slotWidth = Math.max(CARD_SIZES[fittedSize].w, Math.min(cardWidth, CARD_SIZES.sm.w));
   const transfer = game.lastTransfer;
   const showClaimTransfer = game.phase === PHASES.REQUEST && transfer?.forced && transfer.claimedNoCard;
 
   return (
-    <LinearGradient colors={gradients.felt} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.felt}>
+    <LinearGradient colors={gradients.felt} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={[styles.felt, { padding: feltPadding }]}>
       <View style={[styles.inner, compact && styles.innerCompact]}>
-        {/* Trade direction is a physical arrow (giver -> asker): stays LTR in every language */}
-        <View style={styles.tradeRow}>
-          <Text style={styles.tradeName} numberOfLines={1} ellipsizeMode="tail">
-            {game.holderId === myId ? t('common.you') : holderName}
-          </Text>
-          <Text style={styles.arrow}>🎴 ➜</Text>
-          <Text style={styles.tradeName} numberOfLines={1} ellipsizeMode="tail">
-            {game.activeId === myId ? t('common.you') : activeName}
-          </Text>
-        </View>
+        <View style={[styles.heading, compact && styles.headingCompact, compact && width >= 280 && styles.headingInline]}>
+          {/* Trade direction is a physical arrow (giver -> asker): stays LTR in every language */}
+          <View style={styles.tradeRow}>
+            <Text style={styles.tradeName} numberOfLines={1} ellipsizeMode="tail">
+              {game.holderId === myId ? t('common.you') : holderName}
+            </Text>
+            <Text style={styles.arrow}>🎴 ➜</Text>
+            <Text style={styles.tradeName} numberOfLines={1} ellipsizeMode="tail">
+              {game.activeId === myId ? t('common.you') : activeName}
+            </Text>
+          </View>
 
-        {game.requestedRank ? (
-          <Animated.View entering={FadeIn} key={`ask-${game.turn}`} style={styles.bubble}>
-            <Text style={[styles.bubbleText, compact && { fontSize: 14 }, textStyle]}>
-              {rich(t('table.gotAny'), { rank: <Text style={styles.bubbleRank}>{game.requestedRank}</Text> })}
-            </Text>
-          </Animated.View>
-        ) : showClaimTransfer ? (
-          <View style={[styles.bubble, styles.claimBubble]}>
-            <Text style={[styles.bubbleText, styles.claimBubbleText, compact && { fontSize: 12 }, textStyle]}>
-              {t('nocard.claim')}
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.bubble, styles.bubbleIdle]}>
-            <Text style={[styles.bubbleIdleText, textStyle]} numberOfLines={1}>
-              {game.phase === PHASES.REQUEST
-                ? game.activeId === myId
-                  ? t('table.youPicking')
-                  : t('table.picking', { name: activeName })
-                : '…'}
-            </Text>
-          </View>
-        )}
+          {game.requestedRank ? (
+            <Animated.View entering={FadeIn} key={`ask-${game.turn}`} style={styles.bubble}>
+              <Text style={[styles.bubbleText, compact && { fontSize: 14 }, textStyle]}>
+                {rich(t('table.gotAny'), { rank: <Text style={styles.bubbleRank}>{game.requestedRank}</Text> })}
+              </Text>
+            </Animated.View>
+          ) : showClaimTransfer ? (
+            <View style={[styles.bubble, styles.claimBubble]}>
+              <Text style={[styles.bubbleText, styles.claimBubbleText, compact && { fontSize: 12 }, textStyle]}>
+                {t('nocard.claim')}
+              </Text>
+            </View>
+          ) : (
+            <View style={[styles.bubble, styles.bubbleIdle]}>
+              <Text style={[styles.bubbleIdleText, textStyle]} numberOfLines={1}>
+                {game.phase === PHASES.REQUEST
+                  ? game.activeId === myId
+                    ? t('table.youPicking')
+                    : t('table.picking', { name: activeName })
+                  : '…'}
+              </Text>
+            </View>
+          )}
+        </View>
 
         <View style={[styles.slots, { gap: slotGap }]}>
           {[1, 2, 3].map((n) => (
@@ -126,6 +130,7 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
               forcedSlot={n === game.maxOffers}
               showFace={isHolderView && !concealed}
               cardSize={fittedSize}
+              width={slotWidth}
               available={choosing && n <= 2}
             />
           ))}
@@ -140,7 +145,6 @@ const styles = StyleSheet.create({
     borderRadius: 36,
     borderWidth: FELT_BORDER,
     borderColor: colors.night,
-    padding: FELT_PADDING,
     shadowColor: colors.night,
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
@@ -157,7 +161,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  innerCompact: { paddingVertical: 6, gap: 5 },
+  innerCompact: { paddingVertical: 4, gap: 5 },
+  heading: { alignSelf: 'stretch', alignItems: 'center', gap: 8 },
+  headingCompact: { gap: 5 },
+  headingInline: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' },
   tradeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '100%' },
   tradeName: { flexShrink: 1, minWidth: 0, overflow: 'hidden', fontFamily: fonts.bold, color: colors.white, fontSize: 15, maxWidth: 110 },
   arrow: { fontSize: 15, color: colors.yellow },

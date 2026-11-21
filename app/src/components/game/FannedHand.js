@@ -232,7 +232,9 @@ function HandCard({
         style={[styles.slot, { left, bottom, width: s.w, height: s.h, zIndex }, animatedStyle]}
         accessible
         accessibilityRole="button"
-        accessibilityState={{ selected, disabled: !canSelect }}
+        accessibilityState={{ selected }}
+        aria-pressed={selected}
+        aria-disabled={!canSelect}
         accessibilityLabel={concealed ? t('hand.hiddenCard') : card.rank === 'JOKER' ? t('hand.joker') : t('hand.card', { rank: card.rank, suit: t(`suit.${card.suit}`) })}
         onAccessibilityTap={canSelect ? () => onSelect?.(card.id) : undefined}
       >
@@ -248,10 +250,10 @@ function HandCard({
 }
 
 /** Height the hand needs for a given card size / count (fan arc + lift room). */
-export function handHeight(size, count = 5) {
+export function handHeight(size, count = 5, liftRoom = LIFT_PX) {
   const s = CARD_SIZES[size] || CARD_SIZES.md;
   const center = Math.max(0, (count - 1) / 2);
-  return s.h + LIFT_PX + 10 + center * center * 5;
+  return s.h + liftRoom + 10 + center * center * 5;
 }
 
 /**
@@ -283,6 +285,7 @@ export default function FannedHand({
   shuffleNonce = 0,
   size: sizeProp,
   width: widthProp,
+  compact = false,
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const size = sizeProp || (windowWidth >= 375 ? 'lg' : 'md');
@@ -301,7 +304,7 @@ export default function FannedHand({
 
   return (
     // box-none: the full-width hand strip itself never captures a touch.
-    <View pointerEvents="box-none" style={[styles.container, { height: handHeight(size, Math.max(n, 5)) }]}>
+    <View pointerEvents="box-none" style={[styles.container, { height: compact ? handHeight(size, n, 0) : handHeight(size) }]}>
       {stable.map((card) => {
         const i = slotOf.get(card.id);
         const rel = i - center;

@@ -1,4 +1,4 @@
-import React, { forwardRef, useImperativeHandle } from 'react';
+import React, { forwardRef, useImperativeHandle, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSequence, withTiming } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
@@ -14,6 +14,8 @@ import { colors, fonts, cartoonShadow } from '../../theme';
  */
 const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChangeNickname, onEditAvatar, inputRef, error }, ref) {
   const { t, isRTL, textStyle, alignStart } = useI18n();
+  const [focused, setFocused] = useState(false);
+  const showNickname = !focused && !!nickname;
   const shakeX = useSharedValue(0);
   const shakeStyle = useAnimatedStyle(() => ({ transform: [{ translateX: shakeX.value }] }));
 
@@ -47,6 +49,16 @@ const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChan
           <Text style={[styles.label, alignStart]}>{t('profile.nickname')}</Text>
           <View style={[styles.inputRow, error && styles.inputError]}>
             <View style={styles.inputFrame}>
+              {/* Keep the full name readable at rest, including names wider than one line. */}
+              {!!nickname && (
+                <Text
+                  aria-hidden
+                  pointerEvents="none"
+                  style={[styles.inputText, alignStart, !showNickname && styles.invisible]}
+                >
+                  {nickname}
+                </Text>
+              )}
               <TextInput
                 ref={inputRef}
                 value={nickname}
@@ -58,7 +70,9 @@ const ProfileCard = forwardRef(function ProfileCard({ nickname, avatarId, onChan
                 autoCapitalize="words"
                 multiline={false}
                 returnKeyType="done"
-                style={[styles.input, { textAlign: isRTL ? 'right' : 'left' }]}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setFocused(false)}
+                style={[styles.input, styles.inputText, { textAlign: isRTL ? 'right' : 'left' }, showNickname && styles.invisible]}
                 accessibilityLabel={t('profile.nickname')}
               />
             </View>
@@ -133,14 +147,16 @@ const styles = StyleSheet.create({
     borderColor: colors.night,
     borderRadius: 16,
     paddingLeft: 12,
-    height: 50,
+    minHeight: 50,
     maxWidth: '100%',
     overflow: 'hidden',
   },
   inputError: { borderColor: colors.red },
-  inputFrame: { flex: 1, minWidth: 0, overflow: 'hidden' },
-  input: { width: '100%', minWidth: 0, fontFamily: fonts.semibold, fontSize: 18, color: colors.night, paddingVertical: 0 },
-  dice: { flexShrink: 0, paddingHorizontal: 10, height: '100%', justifyContent: 'center' },
+  inputFrame: { flex: 1, minWidth: 0, minHeight: 44, justifyContent: 'center', paddingVertical: 5 },
+  input: { ...StyleSheet.absoluteFillObject, padding: 0 },
+  inputText: { fontFamily: fonts.semibold, fontSize: 18, color: colors.night },
+  invisible: { opacity: 0 },
+  dice: { flexShrink: 0, paddingHorizontal: 10, alignSelf: 'stretch', justifyContent: 'center' },
   diceText: { fontSize: 22 },
   hint: { fontFamily: fonts.regular, color: colors.muted, fontSize: 12, marginTop: 6 },
 });

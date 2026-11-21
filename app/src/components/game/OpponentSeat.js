@@ -68,7 +68,7 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
           </View>
         )}
         {acting && (
-          <View style={styles.thinking}>
+          <View style={[styles.thinking, compact && styles.thinkingCompact]}>
             <Text style={styles.thinkingText}>💭</Text>
           </View>
         )}
@@ -130,6 +130,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   thinking: { position: 'absolute', top: -12, left: -6 },
+  thinkingCompact: { top: -4 },
   thinkingText: { fontSize: 20 },
   chipRow: { position: 'absolute', bottom: -4, flexDirection: 'row', gap: 2 },
   countChip: {

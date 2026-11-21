@@ -23,7 +23,7 @@ export function createSocket(getAuth) {
     transports: ['websocket', 'polling'],
     tryAllTransports: true,
     extraHeaders,
-    transportOptions: extraHeaders ? { polling: { extraHeaders }, websocket: { extraHeaders } } : undefined,
+    ...(extraHeaders && { transportOptions: { polling: { extraHeaders }, websocket: { extraHeaders } } }),
     autoConnect: false,
     reconnection: true,
     reconnectionDelay: 500,
