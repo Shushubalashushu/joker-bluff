@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { IS_NGROK, SERVER_URL } from '../config';
+import { SERVER_URL } from '../config';
 
 let socket = null;
 let lastConnectError = null;
@@ -9,21 +9,13 @@ let lastConnectError = null;
  * `getAuth` is called on EVERY (re)connect so the latest session token and
  * profile are always sent - that's what lets a guest resume their seat.
  *
- * ngrok notes:
- *  - The free tier answers unknown clients with an HTML "visit site" page.
- *    The `ngrok-skip-browser-warning` header bypasses it. React Native sends
- *    `extraHeaders` on BOTH the websocket upgrade and HTTP long-polling.
- *  - We try websocket first and fall back to polling (some mobile networks /
- *    proxies block upgrades) - `tryAllTransports` keeps trying the next one.
+ * Try WebSocket first and fall back to polling on networks that block upgrades.
  */
 export function createSocket(getAuth) {
   if (socket) return socket;
-  const extraHeaders = IS_NGROK ? { 'ngrok-skip-browser-warning': 'true' } : undefined;
   socket = io(SERVER_URL, {
     transports: ['websocket', 'polling'],
     tryAllTransports: true,
-    extraHeaders,
-    ...(extraHeaders && { transportOptions: { polling: { extraHeaders }, websocket: { extraHeaders } } }),
     autoConnect: false,
     reconnection: true,
     reconnectionDelay: 500,

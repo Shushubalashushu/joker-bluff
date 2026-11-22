@@ -9,8 +9,7 @@ import { colors, fonts } from '../theme';
 
 /**
  * Pill shown whenever the socket is not connected.
- * Shows WHICH server we're trying (so a stale ngrok URL is obvious) and the
- * last error. Tap to retry immediately instead of waiting for the backoff.
+ * Shows the server address and the last error. Tap to retry immediately.
  */
 export default function ConnectionBanner() {
   const { t, tError, textStyle } = useI18n();

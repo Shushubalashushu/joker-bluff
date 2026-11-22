@@ -1,40 +1,19 @@
 import Constants from 'expo-constants';
-
-// =============================================================================
-//  🔌 SERVER CONNECTION - paste your public ngrok URL here
-// -----------------------------------------------------------------------------
-//  1. Start the server:   cd server && npm start          (port 3001)
-//  2. Expose it:          ngrok http 3001
-//  3. Paste the "Forwarding" https URL below (no trailing slash) and reload.
-//
-//  Leave it as an empty string ("") to fall back to EXPO_PUBLIC_SERVER_URL or
-//  to your laptop's LAN IP (auto-detected from Metro) on port 3001.
-// =============================================================================
-const PUBLIC_SERVER_URL = 'https://creasing-axis-edition.ngrok-free.dev';
+import { Platform } from 'react-native';
 
 const SERVER_PORT = 3001;
 
-/**
- * Server URL resolution:
- * 1. PUBLIC_SERVER_URL above (ngrok / any public tunnel or deployed host)
- * 2. EXPO_PUBLIC_SERVER_URL (set this for staging/production builds)
- * 3. In development, the same LAN host Metro is served from (so a phone
- *    running Expo Go reaches the Node server on your laptop automatically)
- * 4. localhost (simulator / web)
- */
 function resolveServerUrl() {
-  const pasted = PUBLIC_SERVER_URL.trim().replace(/\/+$/, '');
-  if (pasted) return pasted;
-  if (process.env.EXPO_PUBLIC_SERVER_URL) return process.env.EXPO_PUBLIC_SERVER_URL.replace(/\/+$/, '');
-  const hostUri = Constants.expoConfig?.hostUri; // e.g. "192.168.1.20:8081"
-  const host = hostUri ? hostUri.split(':')[0] : null;
+  // Expo inlines this public URL at build time.
+  const configuredUrl = process.env.EXPO_PUBLIC_SERVER_URL?.trim().replace(/\/+$/, '');
+  if (configuredUrl) return configuredUrl;
+
+  // A phone running Expo Go can reach the development server on Metro's LAN host.
+  const host = Platform.OS === 'web' ? null : Constants.expoConfig?.hostUri?.split(':')[0];
   return `http://${host || 'localhost'}:${SERVER_PORT}`;
 }
 
 export const SERVER_URL = resolveServerUrl();
-
-/** True for ngrok tunnels - they need a header to skip the browser warning page. */
-export const IS_NGROK = /ngrok/i.test(SERVER_URL);
 
 export const STORAGE_KEYS = {
   profile: '@jokerbluff/profile',
