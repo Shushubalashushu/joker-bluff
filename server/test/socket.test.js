@@ -311,6 +311,7 @@ async function scenario(url, clients) {
   assert.equal(active.game.lieDeye.touches.length, 2);
   assert.equal(active.game.lieDeye.pressDurationMs, Math.min(350, active.game.lieDeye.decisionMs));
   assert.equal(active.game.lieDeye.offeredSlot, 0);
+  assert.equal(active.game.lieDeye.lieCount, 0, 'the current false claim is excluded over the wire');
   assert.equal(active.game.lieDeyeWallet.balance, 3);
   assert.equal(bystander.game.lieDeye, null, 'bystander never sees telemetry');
   assert.equal(holder.game.lieDeye, null, 'giver never sees telemetry');
@@ -336,6 +337,9 @@ async function scenario(url, clients) {
   await until(() => active.game.phase === 'DECISION');
   assert.equal((await active.emit('player_decision', { step: firstDecision, accept: true })).code, 'STALE_ACTION');
   assert.equal(active.game.offers.length, 2);
+  assert.equal((await active.emit('use_lie_deye')).ok, true);
+  await until(() => active.game.lieDeye?.offerNumber === 2);
+  assert.equal(active.game.lieDeye.lieCount, 1, 'the rejected false claim now appears in the history');
   await active.emit('player_decision', { accept: false });
   await until(() => holder.game.phase === 'OFFER' && holder.game.hand.length === 3);
 

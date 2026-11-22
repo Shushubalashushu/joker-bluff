@@ -110,7 +110,7 @@ const styles = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center' },
   face: { alignItems: 'center', justifyContent: 'center', backgroundColor: colors.white },
   corner: { position: 'absolute', top: 3, left: 5, alignItems: 'center' },
-  rank: { fontFamily: fonts.bold },
+  rank: { fontFamily: fonts.bold, writingDirection: 'ltr' },
   pip: { marginTop: 8 },
   backInner: {
     flex: 1,

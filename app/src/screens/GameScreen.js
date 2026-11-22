@@ -343,6 +343,7 @@ export default function GameScreen() {
   const tableWidth = r.availW - 2 * TABLE_PADDING - sideCount * (sideWidth + TABLE_GAP);
   const tight = r.compact || (crowded && r.tier !== 'tall');
   const compactChoice = choosing && tight;
+  const showLieDeye = lieDeyeOpen && !!game.lieDeye && game.phase === PHASES.DECISION;
   const seatSize = compactChoice ? 32 : crowded ? Math.min(r.seatAvatar, 44) : r.seatAvatar;
 
   const timerLabel = finished
@@ -378,7 +379,13 @@ export default function GameScreen() {
       <IsolationOverlay active={isolated} />
 
       {/* All four edges: clears the notch / Dynamic Island, the home indicator and landscape cut-outs */}
-      <SafeAreaView pointerEvents="box-none" style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
+      <SafeAreaView
+        pointerEvents="box-none"
+        style={styles.safe}
+        edges={['top', 'bottom', 'left', 'right']}
+        aria-hidden={showLieDeye}
+        importantForAccessibility={showLieDeye ? 'no-hide-descendants' : 'auto'}
+      >
         {/* Header: Leave (everyone) · room chip · End (host) · space for the audio toggle */}
         <View style={styles.header}>
           <Pressable onPress={confirmLeave} style={styles.iconBtn} hitSlop={8} accessibilityLabel={t('game.a11yLeave')}>
@@ -514,7 +521,7 @@ export default function GameScreen() {
       </SafeAreaView>
 
       <LieDeyeOverlay
-        visible={lieDeyeOpen && !!game.lieDeye && game.phase === PHASES.DECISION}
+        visible={showLieDeye}
         data={game.lieDeye}
         giverName={nameOf(game.lieDeye?.giverId)}
         game={game}

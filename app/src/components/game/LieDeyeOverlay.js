@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import Animated, { FadeIn, FadeOut, SlideInDown } from 'react-native-reanimated';
+import Animated, { SlideInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import OfferDecisionButtons from './OfferDecisionButtons';
@@ -89,7 +89,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
   const holdValue = hold == null ? '—' : hold < 1000 ? t('var.milliseconds', { ms: hold }) : secs(t, hold);
 
   return (
-    <Animated.View entering={FadeIn.duration(180)} exiting={FadeOut.duration(150)} style={styles.backdrop}>
+    <View style={styles.backdrop} accessibilityViewIsModal>
       <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
         <View style={styles.header}>
           <Pressable onPress={onClose} style={styles.iconBtn} hitSlop={8} accessibilityRole="button" accessibilityLabel={t('var.hide')}>
@@ -124,6 +124,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
               <StatTile label={t('var.shuffles')} value={String(data.shuffles)} tone={data.shuffles ? colors.pink : colors.yellow} />
               <StatTile label={t('var.pickedSlot')} value={`#${data.offeredSlot + 1}`} sub={t('var.fromLeft')} />
               <StatTile label={t('var.holdDuration')} value={holdValue} sub={t(holdLabel)} tone={colors.teal} />
+              {data.lieCount != null && <StatTile label={t('var.lieCount')} value={String(data.lieCount)} />}
             </View>
 
             <Text style={[styles.section, alignStart]}>{t('var.heatmap')}</Text>
@@ -172,12 +173,13 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
           <OfferDecisionButtons offerCount={data.offerNumber} onDecide={onDecide} busy={busy} />
         </View>
       </SafeAreaView>
-    </Animated.View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(16,6,40,0.94)', zIndex: 80, elevation: 80 },
+  // Keep the board's real cards from showing through the face-down heatmap.
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: '#100628', zIndex: 80, elevation: 80 },
   safe: viewport,
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 8 },
   iconBtn: {

@@ -39,7 +39,7 @@ const MAX_OFFERS = 3; // the 3rd offer is chosen deliberately by the holder and 
  * and passed in via `opts.tokenBalances`. The engine spends from them and enforces
  * the per-match cap (`maxLieDeyeUses`). During DECISION the active player may spend
  * one to (a) reset the clock to a full minute and (b) see the giver's telemetry for
- * the pending offer (decision time, shuffles, touch heatmap).
+ * the pending offer (decision time, shuffles, touch heatmap) and the giver's prior lie count.
  */
 class JokerBluffGame {
   /**
@@ -63,6 +63,7 @@ class JokerBluffGame {
     this.tokens = new Map(this.seats.map((id) => [id, balances.get(id) ?? config.LIE_DEYE.STARTING_TOKENS]));
     /** @type {Map<string, number>} Lie Deye uses in THIS match */
     this.lieDeyeUses = new Map(this.seats.map((id) => [id, 0]));
+    this.liesByPlayer = new Map(this.seats.map((id) => [id, 0]));
     this.maxLieDeyeUses = opts.maxLieDeyeUses ?? config.LIE_DEYE.MAX_USES_PER_GAME;
 
     this.ranks = [];
@@ -75,7 +76,7 @@ class JokerBluffGame {
      * Face-down cards on the table, plus the giver telemetry captured when each was offered.
      * @type {{card: object, status: 'pending'|'rejected'|'accepted', decisionMs: number, phaseLimitMs: number,
      *         handSize: number, offeredSlot: number, touches: object[], shuffles: number, auto: boolean,
-     *         pressDurationMs: number|null, claimedNoCard: boolean, lieDeyeUsed: boolean}[]}
+     *         pressDurationMs: number|null, claimedNoCard: boolean, lieDeyeUsed: boolean, priorLieCount: number}[]}
      */
     this.offers = [];
     this.offerPhaseShuffles = 0; // how often the holder shuffled while choosing the current offer
@@ -147,7 +148,13 @@ class JokerBluffGame {
     const hand = this.hands.get(playerId);
     const idx = hand.findIndex((c) => c.id === cardId);
     if (idx === -1) throw new GameError('BAD_CARD', 'That card is not in your hand');
-    const claimedNoCard = opts.claimedNoCard === true;
+    const claimedNoCard = !opts.auto && opts.claimedNoCard === true;
+    // Snapshot before evaluating this claim so Lie Deye cannot reveal its truth.
+    const priorLieCount = this.liesByPlayer.get(playerId);
+    // Rejected offers still belong to the giver until the final transfer.
+    if (claimedNoCard && this._ownedCards(playerId).some((card) => card.rank === this.requestedRank)) {
+      this.liesByPlayer.set(playerId, priorLieCount + 1);
+    }
 
     const handSize = hand.length;
     const slotOf = new Map(hand.map((c, i) => [c.id, i])); // final order at offer time
@@ -166,6 +173,7 @@ class JokerBluffGame {
       auto: !!opts.auto,
       lieDeyeUsed: false,
       claimedNoCard,
+      priorLieCount,
     });
     const offerNumber = this.offers.length;
     const forced = offerNumber === MAX_OFFERS;
@@ -404,6 +412,7 @@ class JokerBluffGame {
           ? {
               offerNumber: this.offers.length,
               giverId: this.holderId,
+              lieCount: pending.priorLieCount,
               decisionMs: pending.decisionMs,
               phaseLimitMs: pending.phaseLimitMs,
               handSize: pending.handSize,

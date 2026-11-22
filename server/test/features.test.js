@@ -154,12 +154,94 @@ test('lie deye: freezes the clock at 60s and reveals telemetry ONLY to the activ
   assert.equal(va.lieDeye.touches.length, 3);
   assert.equal(va.lieDeye.pressDurationMs, 815);
   assert.equal(va.lieDeye.giverId, holder);
+  assert.equal(va.lieDeye.lieCount, 0);
 
   assert.equal(g.getStateFor(holder).lieDeye, null);
   assert.equal(g.getStateFor(bystander).lieDeye, null);
   assert.ok(!JSON.stringify(g.getStateFor(bystander)).includes('"touches"'), 'no telemetry leak');
   assert.ok(!JSON.stringify(g.getStateFor(bystander)).includes('"pressDurationMs"'), 'no hold duration leak');
   assert.equal(g.getStateFor(bystander).offers[0].lieDeyeUsed, true, 'everyone sees a token was used');
+});
+
+test('lie deye: shows earlier false claims per giver and excludes the current offer', () => {
+  const g = newGame(4, { maxLieDeyeUses: 4 });
+  const holder = rigWin(g);
+  const asker = g.activeId;
+  const hand = g.hands.get(holder);
+  const oddIndex = hand.findIndex((card) => card.rank !== g.ranks[0]);
+  if (hand[oddIndex].rank === 'JOKER') {
+    const other = g.hands.get(asker);
+    [hand[oddIndex], other[0]] = [other[0], hand[oddIndex]];
+  }
+  const onlyMatchingCard = hand[oddIndex];
+
+  g.requestCard(asker, onlyMatchingCard.rank);
+  g.offerCard(holder, onlyMatchingCard.id, { claimedNoCard: true });
+  g.useLieDeye(asker);
+  assert.equal(g.getStateFor(asker).lieDeye.lieCount, 0, 'the first false claim is still under review');
+  g.decide(asker, false);
+
+  assert.ok(hand.every((card) => card.rank !== onlyMatchingCard.rank));
+  g.offerCard(holder, hand[0].id, { claimedNoCard: true });
+  g.useLieDeye(asker);
+  assert.equal(g.getStateFor(asker).lieDeye.lieCount, 1, 'only the previous, rejected false claim is historical');
+  assert.equal(g.getStateFor(holder).lieDeye, null);
+  g.decide(asker, true);
+
+  cycleTo(g, asker);
+  assert.equal(g.holderId, holder);
+  const missingRank = g.ranks.find((rank) => !g.hands.get(holder).some((card) => card.rank === rank));
+  g.requestCard(asker, missingRank);
+  g.offerCard(holder, nonWinningOffer(g), { claimedNoCard: true });
+  g.useLieDeye(asker);
+  assert.equal(g.getStateFor(asker).lieDeye.lieCount, 2, 'the second claim was also false because the giver still owned the rejected card');
+  g.decide(asker, false);
+  g.offerCard(holder, nonWinningOffer(g));
+  g.useLieDeye(asker);
+  assert.equal(g.getStateFor(asker).lieDeye.lieCount, 2, 'the prior honest claim did not increase the history');
+  g.decide(asker, true);
+
+  toDecision(g, []);
+  g.useLieDeye(g.activeId);
+  assert.equal(g.getStateFor(g.activeId).lieDeye.lieCount, 0, 'another giver has a separate count');
+});
+
+test('lie deye: keeps the picked slot and touches distinct and hides faces even with a Joker in play', () => {
+  const g = newGame(4);
+  const holder = g.holderId;
+  const asker = g.activeId;
+  const hand = g.hands.get(holder);
+  const jokerOwner = [...g.hands.values()].find((cards) => cards.some((card) => card.rank === 'JOKER'));
+  if (jokerOwner !== hand) {
+    const jokerIndex = jokerOwner.findIndex((card) => card.rank === 'JOKER');
+    [hand[0], jokerOwner[jokerIndex]] = [jokerOwner[jokerIndex], hand[0]];
+  }
+  g.requestCard(asker, g.ranks[0]);
+  g.shuffleHand(holder, hand.map((card) => card.id).reverse());
+  const jokerSlot = hand.findIndex((card) => card.rank === 'JOKER');
+  const pickedSlot = hand.findIndex((card) => card.rank !== 'JOKER');
+  const joker = hand[jokerSlot];
+  const picked = hand[pickedSlot];
+  g.offerCard(holder, picked.id, { touches: [{ c: joker.id, x: 0.5, y: 0.5, t: 0 }] });
+  g.shuffleHand(holder, hand.map((card) => card.id).reverse());
+  g.useLieDeye(asker);
+
+  let view = g.getStateFor(asker);
+  assert.equal(view.offers[0].card, null);
+  assert.equal(view.lieDeye.offeredSlot, pickedSlot);
+  assert.equal(view.lieDeye.touches[0].s, jokerSlot);
+  assert.ok(!('card' in view.lieDeye));
+  assert.ok(!('c' in view.lieDeye.touches[0]));
+
+  g.decide(asker, false);
+  g.offerCard(holder, joker.id);
+  g.useLieDeye(asker);
+  view = g.getStateFor(asker);
+  assert.ok(view.offers.every(({ card }) => card === null));
+  assert.ok(!('card' in view.lieDeye));
+  g.decide(asker, true, 0);
+  assert.equal(g.getStateFor(asker).lastTransfer.cardId, picked.id);
+  assert.ok(g.getStateFor(holder).hand.some((card) => card.id === joker.id));
 });
 
 test('lie deye: guards (phase, actor, once per offer)', () => {

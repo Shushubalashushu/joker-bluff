@@ -284,7 +284,7 @@ const styles = StyleSheet.create({
   },
   rankChipCompact: { minWidth: 44, height: 44 },
   rankChipPressed: { transform: [{ translateY: 3 }], shadowOpacity: 0 },
-  rankText: { fontFamily: fonts.bold, fontSize: 22, color: colors.night },
+  rankText: { fontFamily: fonts.bold, fontSize: 22, color: colors.night, writingDirection: 'ltr' },
   offerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'stretch' },
   flex: { flex: 1 },
   wide: { alignSelf: 'stretch' },
