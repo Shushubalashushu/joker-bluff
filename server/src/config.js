@@ -22,9 +22,14 @@ const timer = (envName, productionMs) =>
 const HARD_MIN_PLAYERS = 4;
 const MAX_PLAYERS = 8; // limited by the rank pool in game/deck.js
 
+const corsOrigins = (process.env.CORS_ORIGINS?.trim() || process.env.CORS_ORIGIN?.trim() || '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/$/, ''))
+  .filter(Boolean);
+
 module.exports = Object.freeze({
   PORT: int(process.env.PORT, 3001, 0, 65535),
-  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
+  CORS_ORIGINS: Object.freeze(corsOrigins),
 
   DEV_TESTING_MODE,
   MIN_PLAYERS: int(process.env.MIN_PLAYERS, HARD_MIN_PLAYERS, HARD_MIN_PLAYERS, MAX_PLAYERS),
@@ -63,6 +68,6 @@ module.exports = Object.freeze({
   CLEANUP_INTERVAL_MS: 60 * 1000,
   MAX_SESSIONS: 10000,
 
-  // Very small per-socket flood guard.
+  // Gameplay events have an independent budget for each socket, even on shared Wi-Fi.
   RATE_LIMIT: Object.freeze({ WINDOW_MS: 5000, MAX_EVENTS: 40 }),
 });

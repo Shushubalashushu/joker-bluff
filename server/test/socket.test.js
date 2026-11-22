@@ -27,7 +27,13 @@ function client(url, auth = {}) {
     else if (event === 'leave_room') scope = { code: c.room?.code };
     return socket.timeout(2000).emitWithAck(event, { ...scope, ...payload });
   };
-  c.ready = new Promise((resolve) => socket.on('session', resolve));
+  c.ready = new Promise((resolve, reject) => {
+    socket.once('connect_error', reject);
+    socket.once('session', (session) => {
+      socket.off('connect_error', reject);
+      resolve(session);
+    });
+  });
   return c;
 }
 
@@ -40,7 +46,7 @@ const until = async (fn, ms = 2000) => {
   throw new Error('condition not met in time');
 };
 
-async function withWaitingLobby(names, run) {
+async function withSocketServer(run) {
   const server = createGameServer();
   const clients = [];
   try {
@@ -52,6 +58,15 @@ async function withWaitingLobby(names, run) {
       await guest.ready;
       return guest;
     };
+    await run({ server, connectGuest });
+  } finally {
+    clients.forEach(({ socket }) => socket.close());
+    await server.close();
+  }
+}
+
+function withWaitingLobby(names, run) {
+  return withSocketServer(async ({ server, connectGuest }) => {
     const seated = await Promise.all(names.map((nickname) => connectGuest({ nickname })));
     const [host, ...guests] = seated;
     const created = await host.emit('create_room');
@@ -59,11 +74,49 @@ async function withWaitingLobby(names, run) {
     for (const guest of guests) assert.equal((await guest.emit('join_room', { code: created.code })).ok, true);
     await until(() => seated.every((guest) => guest.room?.players.length === names.length));
     await run({ server, seated, code: created.code, connectGuest });
-  } finally {
-    clients.forEach(({ socket }) => socket.close());
-    await server.close();
-  }
+  });
 }
+
+test('40 students on one IP can reconnect, retry room codes and play across five lobbies', { timeout: 15000 }, () =>
+  withSocketServer(async ({ server, connectGuest }) => {
+    const tableSize = 8;
+    const tableCount = 5;
+    let students = await Promise.all(Array.from({ length: tableCount * tableSize }, (_, i) =>
+      connectGuest({ nickname: `Student ${i + 1}` })));
+
+    // A Wi-Fi interruption can make an entire classroom reconnect together repeatedly.
+    // The initial connections plus three waves exceed the old 120-per-address budget.
+    for (let wave = 0; wave < 3; wave++) {
+      students.forEach(({ socket }) => socket.close());
+      students = await Promise.all(students.map(({ session }) => connectGuest({ token: session.token })));
+    }
+    const addresses = new Set([...server.io.sockets.sockets.values()].map((socket) => socket.handshake.address));
+    assert.equal(addresses.size, 1);
+    assert.equal(server.sessions.size, 40);
+
+    const guests = students.filter((_, i) => i % tableSize !== 0);
+    await Promise.all(guests.map(async (guest) => {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        assert.equal((await guest.emit('join_room', { code: 'invalid' })).code, 'BAD_CODE');
+      }
+    }));
+
+    const tables = Array.from({ length: tableCount }, (_, i) => students.slice(i * tableSize, (i + 1) * tableSize));
+    await Promise.all(tables.map(async ([host, ...tableGuests]) => {
+      const created = await host.emit('create_room');
+      assert.equal(created.ok, true);
+      const joins = await Promise.all(tableGuests.map((guest) => guest.emit('join_room', { code: created.code })));
+      assert.ok(joins.every((join) => join.ok));
+      assert.equal((await host.emit('start_game')).ok, true);
+    }));
+    await until(() => students.every((student) => student.game?.hand));
+
+    const events = students.flatMap((student) => [
+      student.emit('shuffle_hand'),
+      ...Array.from({ length: 5 }, () => student.emit('time_sync')),
+    ]);
+    assert.ok((await Promise.all(events)).every((event) => event.ok));
+  }));
 
 test('host kick is scoped to the waiting room and clears only the removed guest', { timeout: 10000 }, () =>
   withWaitingLobby(['Host', 'Bob', 'Cat', 'Dan', 'Eli'], async ({ server, seated, code, connectGuest }) => {

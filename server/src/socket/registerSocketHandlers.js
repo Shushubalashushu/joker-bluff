@@ -6,7 +6,7 @@ const { GameError } = require('../game/JokerBluffGame');
 const { MAX_INPUT_SAMPLES } = require('../game/telemetry');
 const { sanitizeNickname, isAvatarId, sanitizeRoomCode } = require('../utils/sanitize');
 const { containsProfanity } = require('../utils/profanityFilter');
-const { createRateLimiter } = require('../utils/rateLimit');
+const { createRateLimiter, ADDRESS_JOIN_LIMIT, GUEST_JOIN_LIMIT } = require('../utils/rateLimit');
 
 // (No `declare_win`: victory is automatic, see JokerBluffGame#_checkAutoWin.)
 const GAME_ACTIONS = [C2S.REQUEST_CARD, C2S.OFFER_CARD, C2S.PLAYER_DECISION, C2S.USE_LIE_DEYE];
@@ -52,8 +52,8 @@ function validateOffer({ cardId, touches, claimedNoCard }) {
  * Every client->server event uses an ack callback: `{ ok: true, ...data }` or `{ ok: false, code, error }`.
  */
 function registerSocketHandlers(io, { sessions, rooms }) {
-  const allowJoinFromAddress = createRateLimiter({ windowMs: 60000, maxAttempts: 120 });
-  const allowJoinForGuest = createRateLimiter({ windowMs: 60000, maxAttempts: 16 });
+  const allowJoinFromAddress = createRateLimiter(ADDRESS_JOIN_LIMIT);
+  const allowJoinForGuest = createRateLimiter(GUEST_JOIN_LIMIT);
 
   // ---- Guest "login": resume by secret token or mint a new guest session.
   io.use((socket, next) => {
@@ -100,7 +100,7 @@ function registerSocketHandlers(io, { sessions, rooms }) {
       socket.emit(S2C.GAME_STATE, null);
     }
 
-    // ---- tiny flood guard
+    // ---- per-socket flood guard
     let windowStart = Date.now();
     let count = 0;
     socket.use((packet, next) => {

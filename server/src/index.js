@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('http');
+const cors = require('cors');
 const express = require('express');
 const { Server } = require('socket.io');
 
@@ -8,20 +9,33 @@ const config = require('./config');
 const { SessionStore } = require('./sessions/SessionStore');
 const { RoomManager } = require('./rooms/RoomManager');
 const { registerSocketHandlers } = require('./socket/registerSocketHandlers');
-const { createRateLimiter } = require('./utils/rateLimit');
+const { createRateLimiter, ADDRESS_CONNECTION_LIMIT } = require('./utils/rateLimit');
 
 const channel = (code) => `room:${code}`;
+const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
 /** Builds (but does not start) the HTTP + Socket.IO server. Exported for integration tests. */
 function createGameServer() {
+  const browserOrigins = config.CORS_ORIGINS.length ? config.CORS_ORIGINS : [LOOPBACK_ORIGIN];
+  const allowAnyOrigin = browserOrigins.includes('*');
+  const corsOptions = { origin: allowAnyOrigin ? '*' : browserOrigins };
   const app = express();
   app.disable('x-powered-by');
+  app.use(cors(corsOptions));
 
   const httpServer = http.createServer(app);
-  const allowConnection = createRateLimiter({ windowMs: 10000, maxAttempts: 120 });
+  const allowConnection = createRateLimiter(ADDRESS_CONNECTION_LIMIT);
   const io = new Server(httpServer, {
-    cors: { origin: config.CORS_ORIGIN },
-    allowRequest: (req, reply) => reply(null, allowConnection(req.socket.remoteAddress)),
+    cors: corsOptions,
+    allowRequest: (req, reply) => {
+      // WebSocket handshakes need an explicit origin check. Native clients can
+      // omit Origin or send the server's own origin.
+      const { origin, host } = req.headers;
+      const sameHost = origin === `http://${host}` || origin === `https://${host}`;
+      const allowed = !origin || sameHost || allowAnyOrigin || browserOrigins.some((entry) =>
+        typeof entry === 'string' ? entry === origin : entry.test(origin));
+      reply(null, allowed && allowConnection(req.socket.remoteAddress));
+    },
     maxHttpBufferSize: 128 * 1024,
     pingInterval: 10000,
     pingTimeout: 8000,
@@ -42,7 +56,7 @@ function createGameServer() {
   registerSocketHandlers(io, { sessions, rooms });
 
   app.get('/health', (_req, res) => {
-    res.json({ ok: true, uptime: process.uptime(), sessions: sessions.size, ...rooms.stats() });
+    res.set('Cache-Control', 'no-store').json({ ok: true });
   });
 
   const cleanupTimer = setInterval(() => {
@@ -66,8 +80,9 @@ function createGameServer() {
 
 if (require.main === module) {
   const server = createGameServer();
-  server.httpServer.listen(config.PORT, () => {
-    console.log(`🃏 Joker Bluff server listening on :${config.PORT}`);
+  server.httpServer.listen(config.PORT, '0.0.0.0', () => {
+    const { address, port } = server.httpServer.address();
+    console.log(`🃏 Joker Bluff server listening on ${address}:${port}`);
     console.log(`   min players: ${config.MIN_PLAYERS} · Lie Deye start: ${config.LIE_DEYE.STARTING_TOKENS} (max ${config.LIE_DEYE.MAX_USES_PER_GAME}/game)`);
     if (config.DEV_TESTING_MODE) {
       console.log(`   🧪 DEV_TESTING_MODE: every turn timer = ${config.TIMERS.REQUEST / 1000}s (set DEV_TESTING_MODE=0 for real timers)`);
