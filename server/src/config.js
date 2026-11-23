@@ -18,6 +18,7 @@ const timer = (envName, productionMs) =>
 /** Game design rule: a match needs at least 4 players. Env can only RAISE it. */
 const HARD_MIN_PLAYERS = 4;
 const MAX_PLAYERS = 8; // limited by the rank pool in game/deck.js
+const MAX_OPEN_CONNECTIONS = int(process.env.MAX_OPEN_CONNECTIONS, 512, 8);
 
 const corsOrigins = (process.env.CORS_ORIGINS?.trim() || process.env.CORS_ORIGIN?.trim() || '')
   .split(',')
@@ -27,6 +28,7 @@ const corsOrigins = (process.env.CORS_ORIGINS?.trim() || process.env.CORS_ORIGIN
 module.exports = Object.freeze({
   PORT: int(process.env.PORT, 3001, 0, 65535),
   CORS_ORIGINS: Object.freeze(corsOrigins),
+  TRUST_RENDER_INGRESS: process.env.RENDER === 'true' && process.env.TRUST_RENDER_INGRESS !== '0',
 
   DEV_TESTING_MODE,
   MIN_PLAYERS: int(process.env.MIN_PLAYERS, HARD_MIN_PLAYERS, HARD_MIN_PLAYERS, MAX_PLAYERS),
@@ -53,8 +55,7 @@ module.exports = Object.freeze({
     WIN_BONUS: int(process.env.LIE_DEYE_WIN_BONUS, 1, 0),
   }),
 
-  // A player who stays disconnected this long during a match is treated as
-  // having left: the match is terminated and everyone returns to the lobby.
+  // Reserve a disconnected player's seat before replacing it with a bot.
   DISCONNECT_GRACE_MS: int(process.env.DISCONNECT_GRACE_MS, 45000),
 
   ROOM_CODE_LENGTH: 5,
@@ -62,10 +63,12 @@ module.exports = Object.freeze({
   // Rooms with nobody connected are deleted after this long.
   EMPTY_ROOM_TTL_MS: int(process.env.EMPTY_ROOM_TTL_MS, 5 * 60 * 1000),
   // Guest sessions not attached to a room and not connected expire after this long.
-  SESSION_TTL_MS: int(process.env.SESSION_TTL_MS, 24 * 60 * 60 * 1000),
+  SESSION_TTL_MS: int(process.env.SESSION_TTL_MS, 2 * 60 * 1000),
   CLEANUP_INTERVAL_MS: 60 * 1000,
-  MAX_SESSIONS: 10000,
+  MAX_SESSIONS: int(process.env.MAX_SESSIONS, 10000),
+  MAX_ROOMS: int(process.env.MAX_ROOMS, 128),
+  MAX_OPEN_CONNECTIONS,
 
-  // Gameplay events have an independent budget for each socket, even on shared Wi-Fi.
+  // Gameplay budgets survive reconnects and are independent of the shared IP budget.
   RATE_LIMIT: Object.freeze({ WINDOW_MS: 5000, MAX_EVENTS: 40 }),
 });

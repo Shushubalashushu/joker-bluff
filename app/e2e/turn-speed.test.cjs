@@ -14,6 +14,7 @@ const express = require('../../server/node_modules/express');
 const { createGameServer } = require('../../server/src/index');
 const { BotPlayer } = require('../../server/src/game/BotPlayer');
 const { findWinningRank } = require('../../server/src/game/deck');
+const { headers: [{ headers: securityHeaders }] } = require('../vercel.json');
 
 async function until(read, timeout = 6000) {
   const deadline = Date.now() + timeout;
@@ -64,7 +65,8 @@ async function checkRules(page, lang, { escape = false, live = false, whileOpen 
 }
 
 async function checkHomeRules(page, url, nickname) {
-  await page.goto(url);
+  const response = await page.goto(url);
+  assert.match(response.headers()['content-security-policy'], /frame-ancestors 'none'/);
   await checkRules(page, 'en', { escape: page.viewportSize().width > 600 });
   await button(page, 'Switch language (English / Hebrew)').click();
   await checkRules(page, 'he');
@@ -113,7 +115,11 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
     }
   });
 
-  server.app.use(express.static(output));
+  server.app.use(express.static(output, {
+    setHeaders(response) {
+      for (const { key, value } of securityHeaders) response.setHeader(key, value);
+    },
+  }));
   server.httpServer.listen(0, '127.0.0.1');
   await once(server.httpServer, 'listening');
   const url = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -197,7 +203,8 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
   await until(() => handOrder() !== beforeShuffle);
   await button(host, 'Switch language (English / Hebrew)').click();
 
-  room.endGame(room.hostId);
+  host.once('dialog', (dialog) => dialog.accept());
+  await button(host, 'סיום המשחק לכולם').click();
   delete room.botDelay;
   for (const page of [host, guest]) await countdown(page).waitFor({ state: 'detached' });
   await mobileFast.click();
@@ -231,5 +238,25 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
   assert.ok(botMove.at - phaseStartedAt >= 10000, 'tense reply went past the old fast-mode cap');
   assert.ok(botMove.at < deadline - 1000, 'bot replied with time left on the Fast clock');
   assert.ok(events.every(({ type }) => type !== 'timeout'));
+
+  const gameBeforeLeave = room.game;
+  const previousHost = room.hostId;
+  host.once('dialog', (dialog) => dialog.accept());
+  await button(host, 'יציאה מהמשחק').click();
+  await button(host, 'משחק פרטי').waitFor();
+  await button(guest, 'סיום המשחק לכולם').waitFor();
+  const replacement = await until(() => room.players.find((player) => player.id === previousHost && player.isBot));
+  await guest.getByText(replacement.botName.he, { exact: true }).first().waitFor();
+  assert.equal(room.game, gameBeforeLeave);
+  assert.equal(room.players.length, 4);
+
+  await button(host, 'משחק פרטי').click();
+  await host.getByRole('textbox', { name: 'הזנת קוד חדר' }).fill(room.code);
+  await button(host, 'הצטרפות').click();
+  await host.getByText(/לא ניתן להצטרף ללובי הזה/).waitFor();
+
+  room.disconnectGraceMs = 30;
+  await guest.close();
+  await until(() => room.game === null && room.isEmpty);
   assert.deepEqual(errors, []);
 });

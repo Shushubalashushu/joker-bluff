@@ -72,11 +72,13 @@ class JokerBluffGame {
     this.activeId = null;
     this.phase = null;
     this.requestedRank = null;
+    this.exchangePriorLieCount = 0;
+    this.exchangeLies = 0;
     /**
      * Face-down cards on the table, plus the giver telemetry captured when each was offered.
      * @type {{card: object, status: 'pending'|'rejected'|'accepted', decisionMs: number, phaseLimitMs: number,
      *         handSize: number, offeredSlot: number, touches: object[], shuffles: number, auto: boolean,
-     *         pressDurationMs: number|null, claimedNoCard: boolean, lieDeyeUsed: boolean, priorLieCount: number}[]}
+     *         pressDurationMs: number|null, claimedNoCard: boolean, lieDeyeUsed: boolean}[]}
      */
     this.offers = [];
     this.offerPhaseShuffles = 0; // how often the holder shuffled while choosing the current offer
@@ -128,6 +130,8 @@ class JokerBluffGame {
       throw new GameError('BAD_RANK', `Rank must be one of: ${this.ranks.join(', ')}`);
     }
     this.requestedRank = rank;
+    this.exchangePriorLieCount = this.liesByPlayer.get(this.holderId);
+    this.exchangeLies = 0;
     this._enterPhase(PHASES.OFFER);
     return [{ type: 'card_requested', playerId, targetId: this.holderId, rank }];
   }
@@ -149,11 +153,9 @@ class JokerBluffGame {
     const idx = hand.findIndex((c) => c.id === cardId);
     if (idx === -1) throw new GameError('BAD_CARD', 'That card is not in your hand');
     const claimedNoCard = !opts.auto && opts.claimedNoCard === true;
-    // Snapshot before evaluating this claim so Lie Deye cannot reveal its truth.
-    const priorLieCount = this.liesByPlayer.get(playerId);
     // Rejected offers still belong to the giver until the final transfer.
     if (claimedNoCard && this._ownedCards(playerId).some((card) => card.rank === this.requestedRank)) {
-      this.liesByPlayer.set(playerId, priorLieCount + 1);
+      this.exchangeLies += 1;
     }
 
     const handSize = hand.length;
@@ -173,7 +175,6 @@ class JokerBluffGame {
       auto: !!opts.auto,
       lieDeyeUsed: false,
       claimedNoCard,
-      priorLieCount,
     });
     const offerNumber = this.offers.length;
     const forced = offerNumber === MAX_OFFERS;
@@ -309,7 +310,8 @@ class JokerBluffGame {
     const events = [{ type: 'timeout', playerId: actorId, phase: this.phase }];
 
     if (this.phase === PHASES.REQUEST) {
-      events.push(...this.requestCard(actorId, this._autoPickRank(actorId)));
+      // A public timeout request must not disclose anything about the actor's hand.
+      events.push(...this.requestCard(actorId, this.ranks[Math.floor(this.rng() * this.ranks.length)]));
     } else if (this.phase === PHASES.OFFER) {
       events.push(...this.offerCard(actorId, this._autoPickOffer(actorId).id, { auto: true }));
     } else if (this.phase === PHASES.DECISION) {
@@ -412,7 +414,7 @@ class JokerBluffGame {
           ? {
               offerNumber: this.offers.length,
               giverId: this.holderId,
-              lieCount: pending.priorLieCount,
+              lieCount: this.exchangePriorLieCount,
               decisionMs: pending.decisionMs,
               phaseLimitMs: pending.phaseLimitMs,
               handSize: pending.handSize,
@@ -458,6 +460,9 @@ class JokerBluffGame {
     this.hands.get(toId).push(accepted.card);
     // Every unchosen offer returns, including the pending second card if the first was taken.
     for (const offer of this.offers) if (offer !== accepted) giverHand.push(offer.card);
+
+    this.liesByPlayer.set(fromId, this.exchangePriorLieCount + this.exchangeLies);
+    this.exchangeLies = 0;
 
     this.lastTransfer = {
       fromId,
@@ -544,15 +549,6 @@ class JokerBluffGame {
 
   _assertActor(playerId, expected) {
     if (playerId !== expected) throw new GameError('NOT_YOUR_TURN', "It's not your move");
-  }
-
-  /** Autopilot: ask for the rank we already hold the most of. */
-  _autoPickRank(playerId) {
-    const counts = new Map();
-    for (const c of this.hands.get(playerId)) if (!isJoker(c)) counts.set(c.rank, (counts.get(c.rank) || 0) + 1);
-    let best = null;
-    for (const [rank, n] of counts) if (!best || n > counts.get(best)) best = rank;
-    return best || this.ranks[Math.floor(this.rng() * this.ranks.length)];
   }
 
   /**

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { noTranslateProps } from '../utils/webTranslation';
@@ -31,6 +31,17 @@ import { viewport, verticalScrollProps } from '../theme/layout';
 
 const TABLE_PADDING = 4;
 const TABLE_GAP = 2;
+
+function confirmMatchAction(title, message, cancel, confirm, onConfirm) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: cancel, style: 'cancel' },
+    { text: confirm, style: 'destructive', onPress: onConfirm },
+  ]);
+}
 
 /** Splits opponents (clockwise from my left) into left column / top row / right column. */
 function layoutSeats(seats, myId) {
@@ -293,34 +304,22 @@ export default function GameScreen() {
   const isHost = room?.hostId === playerId;
 
   const confirmLeave = () =>
-    Alert.alert(
+    confirmMatchAction(
       t('game.leaveTitle'),
       t(finished ? 'game.leaveFinished' : 'game.leaveMid'),
-      [
-        { text: t('game.stay'), style: 'cancel' },
-        {
-          text: t('game.leave'),
-          style: 'destructive',
-          onPress: async () => {
-            const res = await leaveRoom();
-            if (!res.ok) setToast({ error: res, key: Date.now() });
-          },
-        },
-      ]
+      t('game.stay'),
+      t('game.leave'),
+      async () => {
+        const res = await leaveRoom();
+        if (!res.ok) setToast({ error: res, key: Date.now() });
+      }
     );
 
   const confirmEnd = () =>
-    Alert.alert(t('game.endTitle'), t('game.endBody'), [
-      { text: t('game.keepPlaying'), style: 'cancel' },
-      {
-        text: t('game.endGame'),
-        style: 'destructive',
-        onPress: async () => {
-          const res = await endGame();
-          if (!res.ok) setToast({ error: res, key: Date.now() });
-        },
-      },
-    ]);
+    confirmMatchAction(t('game.endTitle'), t('game.endBody'), t('game.keepPlaying'), t('game.endGame'), async () => {
+      const res = await endGame();
+      if (!res.ok) setToast({ error: res, key: Date.now() });
+    });
 
   if (!game) {
     return (
@@ -391,7 +390,13 @@ export default function GameScreen() {
       >
         {/* Header: Leave (everyone) · room chip · End (host) · space for the audio toggle */}
         <View style={styles.header}>
-          <Pressable onPress={confirmLeave} style={styles.iconBtn} hitSlop={8} accessibilityLabel={t('game.a11yLeave')}>
+          <Pressable
+            onPress={confirmLeave}
+            style={styles.iconBtn}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={t('game.a11yLeave')}
+          >
             <Ionicons name="exit-outline" size={22} color={colors.night} />
           </Pressable>
           <View style={styles.headerChip}>
@@ -402,7 +407,13 @@ export default function GameScreen() {
           </View>
           <LanguageToggle compact />
           {isHost && !finished ? (
-            <Pressable onPress={confirmEnd} style={styles.endBtn} hitSlop={6} accessibilityLabel={t('game.a11yEnd')}>
+            <Pressable
+              onPress={confirmEnd}
+              style={styles.endBtn}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={t('game.a11yEnd')}
+            >
               <Ionicons name="stop-circle" size={16} color={colors.white} />
               {r.availW >= 400 && <Text style={[styles.endText, textStyle]}>{t('game.end')}</Text>}
             </Pressable>

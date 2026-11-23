@@ -13,9 +13,10 @@ class RoomManager {
   /**
    * @param {{sessions: import('../sessions/SessionStore').SessionStore, transport: {toRoom: Function, toPlayer: Function, joinChannel: Function, leaveChannel: Function}}} deps
    */
-  constructor({ sessions, transport }) {
+  constructor({ sessions, transport, maxRooms = config.MAX_ROOMS }) {
     this.sessions = sessions;
     this.transport = transport;
+    this.maxRooms = maxRooms;
     /** @type {Map<string, Room>} */
     this.rooms = new Map();
   }
@@ -34,6 +35,8 @@ class RoomManager {
   }
 
   createRoom(session, profile) {
+    if (this.rooms.size >= this.maxRooms) this.cleanup();
+    if (this.rooms.size >= this.maxRooms) throw new GameError('SERVER_BUSY', 'Server is busy, try again');
     const room = new Room({ code: this._generateCode(), sessions: this.sessions, transport: this.transport });
     this.leaveRoom(session);
     Object.assign(session, profile);
@@ -44,8 +47,13 @@ class RoomManager {
 
   joinRoom(session, code, profile = {}) {
     const room = this.get(code);
-    if (!room) throw new GameError('ROOM_NOT_FOUND', 'No lobby with that code');
-    room.assertCanSeat(session.playerId);
+    if (!room) throw new GameError('ROOM_UNAVAILABLE', 'Could not join that lobby');
+    try {
+      room.assertCanSeat(session.playerId);
+    } catch (err) {
+      if (!(err instanceof GameError)) throw err;
+      throw new GameError('ROOM_UNAVAILABLE', 'Could not join that lobby');
+    }
     room.assertCanUpdateProfile(session, profile);
     if (session.roomCode && session.roomCode !== code) this.leaveRoom(session);
     Object.assign(session, profile);
@@ -57,8 +65,9 @@ class RoomManager {
     const room = session.roomCode ? this.get(session.roomCode) : null;
     session.roomCode = null;
     if (!room) return;
+    session.lastSeen = Date.now();
     if (session.socketId) this.transport.leaveChannel(session.socketId, room.code);
-    room.removePlayer(session.playerId); // mid-match: terminates the match for everyone else
+    room.removePlayer(session.playerId);
     this.transport.toPlayer(session.playerId, S2C.ROOM_STATE, null);
     this.transport.toPlayer(session.playerId, S2C.GAME_STATE, null);
     if (room.isEmpty) this._delete(room);
@@ -66,6 +75,7 @@ class RoomManager {
 
   kickPlayer(room, hostId, playerId) {
     room.assertCanKick(hostId, playerId);
+    room.kickedGuests.add(playerId);
     this.leaveRoom(this.sessions.getByPlayerId(playerId));
     this.transport.toPlayer(playerId, S2C.ROOM_KICKED);
   }
@@ -73,7 +83,7 @@ class RoomManager {
   /** Re-attaches a reconnecting socket to the room it was seated in. */
   restore(session) {
     const room = session.roomCode ? this.get(session.roomCode) : null;
-    if (!room || !room.hasPlayer(session.playerId)) {
+    if (!room || !room.hasHumanSeat(session.playerId)) {
       session.roomCode = null;
       return null;
     }
@@ -86,15 +96,19 @@ class RoomManager {
   cleanup(now = Date.now()) {
     let removed = 0;
     for (const room of this.rooms.values()) {
-      if (room.emptySince && now - room.emptySince > config.EMPTY_ROOM_TTL_MS) {
+      if (room.isEmpty || (room.graceTimers.size === 0 && room.emptySince && now - room.emptySince > config.EMPTY_ROOM_TTL_MS)) {
         for (const p of room.players) {
           const s = this.sessions.getByPlayerId(p.id);
-          if (s && s.roomCode === room.code) s.roomCode = null;
+          if (!p.isBot && s?.roomCode === room.code) {
+            s.roomCode = null;
+            s.lastSeen = now;
+          }
         }
         this._delete(room);
         removed++;
       } else {
         room.pruneTokenBank();
+        room.pruneKickedGuests();
       }
     }
     return removed;

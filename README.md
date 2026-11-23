@@ -49,7 +49,7 @@ npm install
 npm start            # → :3001   (npm run dev for watch mode)
 npm test             # engine unit tests + socket integration test
 ```
-Environment overrides include `PORT`, `CORS_ORIGIN`, `MIN_PLAYERS` (4–8), `TIMER_AFK_MS`, `LIE_DEYE_STARTING_TOKENS`, `LIE_DEYE_MAX_USES` (0–3), `LIE_DEYE_WIN_BONUS`, `DISCONNECT_GRACE_MS`, `EMPTY_ROOM_TTL_MS`, and `SESSION_TTL_MS`.
+Environment overrides include `PORT`, `CORS_ORIGIN`, `MIN_PLAYERS` (4–8), `TIMER_AFK_MS`, `LIE_DEYE_STARTING_TOKENS`, `LIE_DEYE_MAX_USES` (0–3), `LIE_DEYE_WIN_BONUS`, `DISCONNECT_GRACE_MS`, `EMPTY_ROOM_TTL_MS`, `SESSION_TTL_MS`, `MAX_SESSIONS`, `MAX_OPEN_CONNECTIONS`, and `MAX_ROOMS`. Disconnected, unseated guest sessions expire after two minutes by default. Admission reserves transport capacity for known guests.
 
 > [!NOTE]
 > Private rooms use the lobby's selected turn speed for connected players. `DEV_TESTING_MODE` and the individual phase timer overrides still apply to games constructed outside a room. Disconnected players have a separate 3-second move clock and a 45-second reconnection window by default.
@@ -62,7 +62,7 @@ npx expo install --fix   # align native module versions with your installed Expo
 npx expo start
 ```
 > [!IMPORTANT]
-> Expo SDK 54 requires **Node ≥ 20.19**. The server itself runs on Node ≥ 18.
+> Use **Node 24 LTS** for the server and the end-to-end suite. Expo SDK 54 requires Node 20.19 or newer.
 
 ### Connecting phones through ngrok
 1. `cd server && npm start` (port 3001)
@@ -97,9 +97,9 @@ npm run test:e2e
 | 3rd offer | After 2 rejections the holder has exactly 3 cards in hand. They choose one, and it is **auto-accepted** (there is no decision phase). |
 | After a transfer | Every unchosen card returns to the giver. The receiver now has 5 cards and becomes the new holder. The seat after them becomes the new active player. |
 | Win / loss | After a successful transfer, the giver wins automatically if passing their fifth card leaves exactly four cards of one rank. Rejected cards return before the win check. Whoever owns the Joker after the transfer loses. |
-| Timers | The host selects **Fast** (15 seconds) or **Standard** (2 minutes, the default) in the private lobby. Everyone can see the selection. Each request, offer and decision gets the full selected time, and the room keeps its selection for rematches. On timeout the server asks for the player's most-held rank, offers a random card, or accepts. A disconnected player's clock can drop to 3 seconds. |
-| Leave mid-match | The deck size depends on the player count, so the match is **terminated**. Everyone gets a `game_aborted` event and goes back to the room's waiting room (same code, same group). |
-| Disconnect | Your seat is kept for 45s. The server auto-plays for disconnected guests during a match. If you don't come back in time, it's handled the same as leaving. |
+| Timers | The host selects **Fast** (15 seconds) or **Standard** (2 minutes, the default) in the private lobby. Each request, offer and decision gets the selected time. The selection carries over to rematches. On timeout the server asks for a random valid rank, offers a random card, or accepts. A disconnected player's clock can drop to 3 seconds. |
+| Leave mid-match | A bot takes the same seat, hand, and place in the exchange. Hosting passes to a remaining human. When the last human leaves, the match ends and its timers stop. Returning to the lobby removes match-only bots. Play Again keeps bots in the lineup with their own identities and fresh wallets. |
+| Disconnect | Your seat is kept for 45s while the server auto-plays. If the grace period expires, the same takeover rules apply. |
 | End Game | **Host only.** Terminates the match (or the results screen) and sends everyone back to the waiting room. |
 
 ### Practice with bots
@@ -132,7 +132,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | Client → Server | Payload |
 |---|---|
 | `create_room` | `{ nickname, avatarId }` → `{ code }` |
-| `join_room` | `{ code, nickname, avatarId }` |
+| `join_room` | `{ code, nickname, avatarId }`. Unavailable lobbies return `ROOM_UNAVAILABLE` to outsiders. A kicked guest session cannot rejoin the same room. |
 | `leave_room` | `{ code }` |
 | `kick_player` | `{ lifecycleId, playerId }` (host only, in the waiting room) |
 | `add_bot` | `{ lifecycleId }` → `{ botId }` (host only, in the waiting room) |
@@ -153,13 +153,14 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `room_state` | Public lobby state, the same for everyone, or `null`. It includes `turnSpeed` and each player's Lie Deye balance. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. |
 | `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
-| `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
+| `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. `seat_taken_over` identifies a departing player whose seat is now a bot. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
 
 ## Server authority and safety checks
 
 - The server ties each action to the active socket for a guest session and checks room membership, host permissions, turn ownership, phase, and deadline. It checks destination admission before leaving the current room.
 - The server deals the deck and owns all transfers and token balances. Card IDs are opaque. Players receive their own hand and permitted public information. A client shuffle can reorder only the cards in its own current hand.
-- The server validates handshake and event payloads, bounds payload size and guest sessions, and rate-limits socket events, connections, and room-code attempts. Touch telemetry is client-reported and capped at 200 retained samples. Hold duration is also client-reported and bounded by the server-measured offer window.
+- Connection and join limits share the same client address resolution. On Render's managed public ingress, the server uses the Cloudflare-provided `CF-Connecting-IP` header. Set `TRUST_RENDER_INGRESS=0` if untrusted callers can reach the service through the private network. Other environments use the socket peer address. The per-guest gameplay budget survives reconnects.
+- Lie Deye reads the same historical count throughout an exchange. New false claims enter the count after the transfer. Client-reported touch telemetry is capped at 200 samples and hold duration is bounded by the server-measured offer window.
 
 ## UI notes
 

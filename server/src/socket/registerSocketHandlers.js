@@ -6,7 +6,9 @@ const { GameError } = require('../game/JokerBluffGame');
 const { MAX_INPUT_SAMPLES } = require('../game/telemetry');
 const { sanitizeNickname, isAvatarId, sanitizeRoomCode } = require('../utils/sanitize');
 const { containsProfanity } = require('../utils/profanityFilter');
-const { createRateLimiter, ADDRESS_JOIN_LIMIT, GUEST_JOIN_LIMIT } = require('../utils/rateLimit');
+const {
+  createRateLimiter, ADDRESS_JOIN_LIMIT, GUEST_JOIN_LIMIT, ADDRESS_NEW_GUEST_LIMIT, GLOBAL_NEW_GUEST_LIMIT,
+} = require('../utils/rateLimit');
 
 // (No `declare_win`: victory is automatic, see JokerBluffGame#_checkAutoWin.)
 const GAME_ACTIONS = [C2S.REQUEST_CARD, C2S.OFFER_CARD, C2S.PLAYER_DECISION, C2S.USE_LIE_DEYE];
@@ -51,9 +53,16 @@ function validateOffer({ cardId, touches, claimedNoCard }) {
  * Wires Socket.IO to the session store and room manager.
  * Every client->server event uses an ack callback: `{ ok: true, ...data }` or `{ ok: false, code, error }`.
  */
-function registerSocketHandlers(io, { sessions, rooms }) {
+function registerSocketHandlers(io, { sessions, rooms, addressOf, maxOpenForNewGuests }) {
   const allowJoinFromAddress = createRateLimiter(ADDRESS_JOIN_LIMIT);
   const allowJoinForGuest = createRateLimiter(GUEST_JOIN_LIMIT);
+  const allowNewGuestFromAddress = createRateLimiter(ADDRESS_NEW_GUEST_LIMIT);
+  const allowNewGuestGlobally = createRateLimiter(GLOBAL_NEW_GUEST_LIMIT);
+  const allowEvent = createRateLimiter({
+    windowMs: config.RATE_LIMIT.WINDOW_MS,
+    maxAttempts: config.RATE_LIMIT.MAX_EVENTS,
+    maxKeys: config.MAX_SESSIONS,
+  });
 
   // ---- Guest "login": resume by secret token or mint a new guest session.
   io.use((socket, next) => {
@@ -63,13 +72,22 @@ function registerSocketHandlers(io, { sessions, rooms }) {
         throw new GameError('BAD_PAYLOAD', 'Invalid guest session');
       }
       const profile = readProfile(auth, { auth: true });
-      const session = sessions.getByToken(auth.token) || sessions.create();
+      const address = addressOf(socket.request);
+      let session = sessions.getByToken(auth.token);
+      if (!session) {
+        if (io.engine.clientsCount > maxOpenForNewGuests) throw new GameError('SERVER_BUSY', 'Server is busy, try again');
+        if (!allowNewGuestFromAddress(address) || !allowNewGuestGlobally('new-guests')) {
+          throw new GameError('RATE_LIMITED', 'Too many new guests. Try again shortly');
+        }
+        session = sessions.create();
+      }
       if (!session) throw new GameError('SERVER_BUSY', 'Server is busy, try again');
       // A seated guest's approved nickname survives reconnects and stale local profile data.
       if (session.roomCode) delete profile.nickname;
       Object.assign(session, profile);
       if (!session.nickname) session.nickname = sanitizeNickname('');
       socket.data.session = session;
+      socket.data.address = address;
     } catch (err) {
       if (!(err instanceof GameError)) console.error('Guest handshake failed', err);
       const error = new Error(err instanceof GameError ? err.message : 'Could not connect');
@@ -100,16 +118,9 @@ function registerSocketHandlers(io, { sessions, rooms }) {
       socket.emit(S2C.GAME_STATE, null);
     }
 
-    // ---- per-socket flood guard
-    let windowStart = Date.now();
-    let count = 0;
+    // Charge the guest's budget even after its transport is replaced.
     socket.use((packet, next) => {
-      const now = Date.now();
-      if (now - windowStart > config.RATE_LIMIT.WINDOW_MS) {
-        windowStart = now;
-        count = 0;
-      }
-      if (++count > config.RATE_LIMIT.MAX_EVENTS) {
+      if (!allowEvent(session.playerId)) {
         const ack = packet[packet.length - 1];
         if (typeof ack === 'function') ack({ ok: false, code: 'RATE_LIMITED', error: 'Slow down!' });
         return; // drop silently
@@ -119,7 +130,7 @@ function registerSocketHandlers(io, { sessions, rooms }) {
 
     const currentRoom = (lifecycleId) => {
       const room = session.roomCode && rooms.get(session.roomCode);
-      if (!room?.hasPlayer(session.playerId)) throw new GameError('NO_ROOM', 'You are not in a lobby');
+      if (!room?.hasHumanSeat(session.playerId)) throw new GameError('NO_ROOM', 'You are not in a lobby');
       if (lifecycleId !== undefined) room.assertLifecycle(lifecycleId);
       return room;
     };
@@ -163,7 +174,7 @@ function registerSocketHandlers(io, { sessions, rooms }) {
     });
 
     on(C2S.JOIN_ROOM, (p) => {
-      if (!allowJoinForGuest(session.playerId) || !allowJoinFromAddress(socket.handshake.address)) {
+      if (!allowJoinForGuest(session.playerId) || !allowJoinFromAddress(socket.data.address)) {
         throw new GameError('RATE_LIMITED', 'Too many join attempts. Try again shortly');
       }
       const code = sanitizeRoomCode(p.code);

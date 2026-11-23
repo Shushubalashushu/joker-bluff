@@ -25,6 +25,8 @@ export function describeEvent(e, nameOf, myId, t = fallbackT) {
       return e.forced ? t('event.transferForced', { who: who(e.toId) }) : t('event.transfer', { who: who(e.toId), n: e.offerNumber });
     case 'timeout':
       return t('event.timeout', { who: who(e.playerId) });
+    case 'seat_taken_over':
+      return t('event.seatTakenOver', { name: e.nickname });
     case 'game_over':
       return t('event.gameOver', { who: who(e.winnerId), rank: e.winningRank });
     case 'lie_deye_used':

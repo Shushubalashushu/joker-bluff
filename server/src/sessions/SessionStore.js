@@ -11,7 +11,10 @@ const config = require('../config');
  * so nobody can hijack a seat by reading the room state.
  */
 class SessionStore {
-  constructor() {
+  constructor({ maxSessions = config.MAX_SESSIONS, ttlMs = config.SESSION_TTL_MS, now = Date.now } = {}) {
+    this.maxSessions = maxSessions;
+    this.ttlMs = ttlMs;
+    this.now = now;
     /** @type {Map<string, Session>} token -> session */
     this.byToken = new Map();
     /** @type {Map<string, Session>} playerId -> session */
@@ -19,7 +22,8 @@ class SessionStore {
   }
 
   create() {
-    if (this.size >= config.MAX_SESSIONS) return null;
+    if (this.size >= this.maxSessions) this.cleanup();
+    if (this.size >= this.maxSessions) return null;
     const session = {
       token: crypto.randomBytes(24).toString('base64url'),
       playerId: `p_${crypto.randomBytes(8).toString('hex')}`,
@@ -27,7 +31,7 @@ class SessionStore {
       avatarId: 0,
       socketId: null,
       roomCode: null,
-      lastSeen: Date.now(),
+      lastSeen: this.now(),
     };
     this.byToken.set(session.token, session);
     this.byPlayerId.set(session.playerId, session);
@@ -35,7 +39,12 @@ class SessionStore {
   }
 
   getByToken(token) {
-    return typeof token === 'string' ? this.byToken.get(token) || null : null;
+    const session = typeof token === 'string' ? this.byToken.get(token) : null;
+    if (session && this._expired(session, this.now())) {
+      this.delete(session);
+      return null;
+    }
+    return session || null;
   }
 
   getByPlayerId(playerId) {
@@ -56,15 +65,19 @@ class SessionStore {
   }
 
   /** Drop guest sessions that are offline and not seated anywhere. */
-  cleanup(ttlMs, now = Date.now()) {
+  cleanup(now = this.now()) {
     let removed = 0;
     for (const s of this.byToken.values()) {
-      if (!s.socketId && !s.roomCode && now - s.lastSeen > ttlMs) {
+      if (this._expired(s, now)) {
         this.delete(s);
         removed++;
       }
     }
     return removed;
+  }
+
+  _expired(session, now) {
+    return !session.socketId && !session.roomCode && now - session.lastSeen >= this.ttlMs;
   }
 
   get size() {

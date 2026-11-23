@@ -9,13 +9,13 @@ const config = require('./config');
 const { SessionStore } = require('./sessions/SessionStore');
 const { RoomManager } = require('./rooms/RoomManager');
 const { registerSocketHandlers } = require('./socket/registerSocketHandlers');
-const { createRateLimiter, ADDRESS_CONNECTION_LIMIT } = require('./utils/rateLimit');
+const { createRateLimiter, clientAddress, ADDRESS_CONNECTION_LIMIT } = require('./utils/rateLimit');
 
 const channel = (code) => `room:${code}`;
 const LOOPBACK_ORIGIN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
 
 /** Builds (but does not start) the HTTP + Socket.IO server. Exported for integration tests. */
-function createGameServer() {
+function createGameServer({ maxOpenConnections = config.MAX_OPEN_CONNECTIONS } = {}) {
   const browserOrigins = config.CORS_ORIGINS.length ? config.CORS_ORIGINS : [LOOPBACK_ORIGIN];
   const allowAnyOrigin = browserOrigins.includes('*');
   const corsOptions = { origin: allowAnyOrigin ? '*' : browserOrigins };
@@ -25,6 +25,10 @@ function createGameServer() {
 
   const httpServer = http.createServer(app);
   const allowConnection = createRateLimiter(ADDRESS_CONNECTION_LIMIT);
+  const reconnectReserve = Math.floor(maxOpenConnections / 4);
+  // Keep unclassified Engine.IO handshakes below the reconnect reserve.
+  const maxPending = Math.max(1, Math.floor(maxOpenConnections * 3 / 16));
+  const addressOf = (req) => clientAddress(req, config.TRUST_RENDER_INGRESS);
   const io = new Server(httpServer, {
     cors: corsOptions,
     allowRequest: (req, reply) => {
@@ -34,7 +38,9 @@ function createGameServer() {
       const sameHost = origin === `http://${host}` || origin === `https://${host}`;
       const allowed = !origin || sameHost || allowAnyOrigin || browserOrigins.some((entry) =>
         typeof entry === 'string' ? entry === origin : entry.test(origin));
-      reply(null, allowed && allowConnection(req.socket.remoteAddress));
+      const open = io.engine.clientsCount;
+      const pending = open - io.of('/').sockets.size;
+      reply(null, allowed && open < maxOpenConnections && pending < maxPending && allowConnection(addressOf(req)));
     },
     maxHttpBufferSize: 128 * 1024,
     pingInterval: 10000,
@@ -53,15 +59,15 @@ function createGameServer() {
   };
   const rooms = new RoomManager({ sessions, transport });
 
-  registerSocketHandlers(io, { sessions, rooms });
+  registerSocketHandlers(io, { sessions, rooms, addressOf, maxOpenForNewGuests: maxOpenConnections - reconnectReserve });
 
   app.get('/health', (_req, res) => {
     res.set('Cache-Control', 'no-store').json({ ok: true });
   });
 
   const cleanupTimer = setInterval(() => {
-    sessions.cleanup(config.SESSION_TTL_MS);
     rooms.cleanup();
+    sessions.cleanup();
   }, config.CLEANUP_INTERVAL_MS);
   cleanupTimer.unref();
 

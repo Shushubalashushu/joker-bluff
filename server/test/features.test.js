@@ -10,6 +10,7 @@ const { sanitizeTouches, sanitizePressDuration } = require('../src/game/telemetr
 const { Room } = require('../src/rooms/Room');
 const { RoomManager } = require('../src/rooms/RoomManager');
 const { SessionStore } = require('../src/sessions/SessionStore');
+const { clientAddress } = require('../src/utils/rateLimit');
 
 const ids = (n) => Array.from({ length: n }, (_, i) => `p${i}`);
 
@@ -164,7 +165,7 @@ test('lie deye: freezes the clock at 60s and reveals telemetry ONLY to the activ
   assert.equal(g.getStateFor(bystander).offers[0].lieDeyeUsed, true, 'everyone sees a token was used');
 });
 
-test('lie deye: shows earlier false claims per giver and excludes the current offer', () => {
+test('lie deye: both reviews use the same historical count until the exchange completes', () => {
   const g = newGame(4, { maxLieDeyeUses: 4 });
   const holder = rigWin(g);
   const asker = g.activeId;
@@ -185,7 +186,8 @@ test('lie deye: shows earlier false claims per giver and excludes the current of
   assert.ok(hand.every((card) => card.rank !== onlyMatchingCard.rank));
   g.offerCard(holder, hand[0].id, { claimedNoCard: true });
   g.useLieDeye(asker);
-  assert.equal(g.getStateFor(asker).lieDeye.lieCount, 1, 'only the previous, rejected false claim is historical');
+  assert.equal(g.getStateFor(asker).lieDeye.lieCount, 0, 'both offers share the same historical count');
+  assert.equal(g.liesByPlayer.get(holder), 0, 'no new claims are published before transfer');
   assert.equal(g.getStateFor(holder).lieDeye, null);
   g.decide(asker, true);
 
@@ -380,14 +382,14 @@ test('shuffle: refused once the game is over', () => {
 
 // ------------------------------------------------------------------ Room: leave / end game
 
-function makeRoom(n = 4) {
+function makeRoom(n = 4, options = {}) {
   const sessions = new SessionStore();
   const sent = [];
   const transport = {
     toRoom: (code, event, payload) => sent.push({ to: 'room', event, payload }),
     toPlayer: (pid, event, payload) => sent.push({ to: pid, event, payload }),
   };
-  const room = new Room({ code: 'ABCDE', sessions, transport });
+  const room = new Room({ code: 'ABCDE', sessions, transport, ...options });
   const players = Array.from({ length: n }, (_, i) => {
     const s = sessions.create();
     s.nickname = `P${i}`;
@@ -398,6 +400,78 @@ function makeRoom(n = 4) {
   });
   return { room, sessions, players, sent };
 }
+
+test('guest storage reclaims expired unseated sessions before denying new guests', () => {
+  let now = 0;
+  const sessions = new SessionStore({ maxSessions: 3, ttlMs: 50, now: () => now });
+  const unseated = sessions.create();
+  const seated = Object.assign(sessions.create(), { roomCode: 'ABCDE' });
+  const connected = Object.assign(sessions.create(), { socketId: 'connected-guest' });
+  now = 49;
+  assert.equal(sessions.create(), null);
+  now = 50;
+  assert.ok(sessions.create());
+  assert.equal(sessions.getByToken(unseated.token), null);
+  assert.equal(sessions.getByPlayerId(unseated.playerId), null);
+  assert.equal(sessions.getByToken(seated.token), seated);
+  assert.equal(sessions.getByToken(connected.token), connected);
+});
+
+test('the room cap rejects new rooms independently of session and seat capacity', () => {
+  const sessions = new SessionStore();
+  const transport = { toRoom() {}, toPlayer() {}, joinChannel() {}, leaveChannel() {} };
+  const rooms = new RoomManager({ sessions, transport, maxRooms: 1 });
+  const host = Object.assign(sessions.create(), { socketId: 'host' });
+  const guest = Object.assign(sessions.create(), { socketId: 'guest' });
+  const room = rooms.createRoom(host);
+  try {
+    assert.throws(() => rooms.createRoom(guest), { code: 'SERVER_BUSY' });
+    assert.throws(() => rooms.createRoom(host), { code: 'SERVER_BUSY' });
+    assert.equal(host.roomCode, room.code);
+    assert.equal(rooms.joinRoom(guest, room.code), room);
+    assert.equal(rooms.stats().rooms, 1);
+  } finally {
+    room.destroy();
+  }
+});
+
+test('address resolution trusts the managed Render header only on Render', () => {
+  const req = { socket: { remoteAddress: '10.0.0.8' }, headers: {
+    'cf-connecting-ip': '2001:0DB8::001', 'x-forwarded-for': '192.0.2.5',
+  } };
+  assert.equal(clientAddress(req, false), '10.0.0.8');
+  assert.equal(clientAddress(req, true), '2001:db8::1');
+  delete req.headers['cf-connecting-ip'];
+  assert.equal(clientAddress(req, true), '10.0.0.8');
+  req.headers['cf-connecting-ip'] = '192.0.2.5, 192.0.2.6';
+  assert.equal(clientAddress(req, true), '10.0.0.8');
+});
+
+test('request timeout rank stays independent of the actor hand', () => {
+  const g = newGame(4);
+  const [first, second] = g.ranks;
+  const asker = g.activeId;
+  const hand = g.hands.get(asker);
+  for (const card of hand) card.rank = first;
+  g.rng = () => 0.35;
+  const events = g.handleTimeout();
+  assert.equal(events.find((event) => event.type === 'card_requested').rank, second);
+});
+
+test('unchanged profile updates do not publish snapshots', () => {
+  const { room, players, sent } = makeRoom();
+  try {
+    sent.length = 0;
+    const [player] = players;
+    room.updateProfile(player, { nickname: player.nickname, avatarId: player.avatarId });
+    room.updateProfile(player, {});
+    assert.deepEqual(sent, []);
+    room.updateProfile(player, { avatarId: 3 });
+    assert.equal(sent.filter(({ event }) => event === 'room_state').length, 1);
+  } finally {
+    room.destroy();
+  }
+});
 
 for (const [speed, duration] of [['fast', 15000], ['standard', 120000]]) {
   test(`${speed} room clocks cover every move, Lie Deye, timeouts and rematches`, async () => {
@@ -487,25 +561,41 @@ test('room manager: kicking an offline guest clears their seat and disconnect ti
   room.destroy();
 });
 
-test('room: a player leaving mid-match terminates it and returns everyone to the lobby', () => {
+test('room: leaving in the middle of an exchange keeps the cards, phase and remaining deadline', () => {
   const { room, players, sent } = makeRoom(5);
-  room.startGame(players[0].playerId);
-  assert.equal(room.status, 'playing');
-
-  room.removePlayer(players[4].playerId);
-  assert.equal(room.status, 'waiting');
-  assert.equal(room.game, null);
-  assert.equal(room.players.length, 4);
-  const abort = sent.find((m) => m.event === 'game_event' && m.payload.type === 'game_aborted');
-  assert.equal(abort.payload.reason, 'player_left');
-  assert.equal(abort.payload.nickname, 'P4');
-  const lastGameState = sent.filter((m) => m.event === 'game_state' && m.to === players[0].playerId).pop();
-  assert.equal(lastGameState.payload, null, 'remaining players get game_state null');
-
-  // Remaining players can start a fresh match with a re-sized deck.
-  room.startGame(players[0].playerId);
-  assert.equal(room.game.getStateFor(players[0].playerId).deckSize, 17);
-  room.destroy();
+  const hostId = players[0].playerId;
+  try {
+    room.startGame(hostId);
+    const game = room.game;
+    const { holderId, activeId } = game;
+    room.act(activeId, 'request_card', { rank: game.ranks[0] });
+    room.act(holderId, 'offer_card', { cardId: nonWinningOffer(game) });
+    const { step, deadline } = game;
+    const cards = game.getStateFor(holderId).hand;
+    const offer = game.offers[0];
+    sent.length = 0;
+    room.removePlayer(holderId);
+    assert.equal(room.status, 'playing');
+    assert.equal(room.game, game);
+    assert.equal(game.step, step);
+    assert.equal(game.deadline, deadline);
+    assert.equal(game.getStateFor(activeId).deckSize, 21);
+    assert.deepEqual(game.getStateFor(holderId).hand, cards);
+    assert.equal(game.offers[0], offer);
+    assert.ok(room.players.find((player) => player.id === holderId).temporary);
+    assert.ok(room.botBrains.has(holderId));
+    assert.ok(sent.some(({ payload }) => payload?.type === 'seat_taken_over' && payload.playerId === holderId));
+    assert.ok(!sent.some(({ event, to }) => event === 'game_state' && to === holderId));
+    assert.throws(() => room.shuffleHand(holderId), { code: 'NOT_PLAYING' });
+    room.act(activeId, 'player_decision', { accept: true });
+    playAutoWin(game, (pid, event, payload) => room.act(pid, event, payload));
+    room.startGame(room.hostId, { rematch: true });
+    assert.equal(room.players.length, 5);
+    assert.equal(room.hasPlayer(holderId), false);
+    assert.equal(room.players.filter((p) => p.isBot).length, 1);
+  } finally {
+    room.destroy();
+  }
 });
 
 test('room: host leaving mid-match hands host to someone else', () => {
@@ -513,8 +603,37 @@ test('room: host leaving mid-match hands host to someone else', () => {
   room.startGame(players[0].playerId);
   room.removePlayer(players[0].playerId);
   assert.equal(room.hostId, players[1].playerId);
+  assert.equal(room.status, 'playing');
+  assert.throws(() => room.endGame(players[0].playerId), { code: 'NOT_HOST' });
+  room.endGame(players[1].playerId);
   assert.equal(room.status, 'waiting');
+  assert.equal(room.players.length, 3, 'returning to the lobby removes the match-only bot');
   room.destroy();
+});
+
+test('room: after the grace period a bot acts, and the last human leaving ends the match', async () => {
+  const { room, players } = makeRoom(4, { disconnectGraceMs: 10, botDelay: () => 0 });
+  try {
+    room.startGame(players[0].playerId);
+    const game = room.game;
+    const actor = players.find((p) => p.playerId === game.actorId);
+    const initialStep = game.step;
+    actor.socketId = null;
+    room.onPlayerDisconnected(actor.playerId);
+    assert.equal(room.hasHumanSeat(actor.playerId), true);
+    for (let i = 0; game.step === initialStep && i < 50; i++) await wait(5);
+    assert.ok(game.step > initialStep);
+    assert.equal(room.hasHumanSeat(actor.playerId), false);
+    assert.equal(actor.roomCode, null);
+    for (const p of players.filter((p) => p !== actor)) room.removePlayer(p.playerId);
+    assert.equal(room.game, null);
+    assert.equal(room.isEmpty, true);
+    assert.equal(room.timer, null);
+    assert.equal(room.botJob, null);
+    assert.equal(room.hostId, null);
+  } finally {
+    room.destroy();
+  }
 });
 
 test('room: only the host can End Game; it returns everyone to the lobby', () => {
@@ -576,7 +695,7 @@ test('room switch: failed admission preserves the current match, seat, and profi
   for (let i = 11; i < 14; i += 1) rooms.joinRoom(connectGuest(i), destination.code);
   destination.startGame(destinationHost.playerId);
 
-  assert.throws(() => rooms.joinRoom(host, destination.code, { nickname: 'New name' }), { code: 'IN_PROGRESS' });
+  assert.throws(() => rooms.joinRoom(host, destination.code, { nickname: 'New name' }), { code: 'ROOM_UNAVAILABLE' });
   assert.equal(current.status, 'playing');
   assert.equal(host.roomCode, current.code);
   assert.equal(host.nickname, 'P0');

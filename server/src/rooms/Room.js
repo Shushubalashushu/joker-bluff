@@ -33,8 +33,7 @@ const ABORT_REASONS = Object.freeze({
  *
  * Leaving rules:
  *  - waiting room: the player simply loses their seat.
- *  - mid-match:   the deck size depends on the player count, so the match is
- *                 TERMINATED; everyone remaining returns to the waiting room.
+ *  - mid-match:   a bot takes the departing player's seat while any humans remain.
  *  - disconnect:  the seat is kept (server auto-plays) for DISCONNECT_GRACE_MS;
  *                 if they don't come back it's treated as leaving.
  *  - host:        can End Game at any time -> everyone back to the waiting room.
@@ -46,7 +45,8 @@ class Room {
    * @param {import('../sessions/SessionStore').SessionStore} deps.sessions
    * @param {{toRoom: Function, toPlayer: Function}} deps.transport
    */
-  constructor({ code, sessions, transport, botRandom = Math.random, botDelay, setupRandom = Math.random }) {
+  constructor({ code, sessions, transport, botRandom = Math.random, botDelay, setupRandom = Math.random,
+    disconnectGraceMs = config.DISCONNECT_GRACE_MS }) {
     this.code = code;
     this.lifecycleId = randomUUID();
     this.sessions = sessions;
@@ -54,6 +54,7 @@ class Room {
     this.hostId = null;
     /** @type {{id: string, nickname: string, avatarId: number, isBot?: boolean, botName?: {en: string, he: string}}[]} lobby order */
     this.players = [];
+    this.kickedGuests = new Set();
     this.status = ROOM_STATUS.WAITING;
     this.turnSpeed = config.DEFAULT_TURN_SPEED;
     /** @type {JokerBluffGame|null} */
@@ -65,6 +66,7 @@ class Room {
     this.botRandom = botRandom;
     this.botDelay = botDelay;
     this.setupRandom = setupRandom;
+    this.disconnectGraceMs = disconnectGraceMs;
     /** @type {Map<string, NodeJS.Timeout>} playerId -> disconnect grace timer */
     this.graceTimers = new Map();
     /**
@@ -91,12 +93,16 @@ class Room {
     return this.players.some((p) => p.id === playerId);
   }
 
+  hasHumanSeat(playerId) {
+    return this.players.some((p) => p.id === playerId && !p.isBot);
+  }
+
   get isEmpty() {
     return this.players.length === 0;
   }
 
   get connectedCount() {
-    return this.players.filter((p) => this.sessions.isConnected(p.id)).length;
+    return this.players.filter((p) => !p.isBot && this.sessions.isConnected(p.id)).length;
   }
 
   _ready(player) {
@@ -125,7 +131,10 @@ class Room {
   }
 
   assertCanSeat(playerId) {
-    if (this.hasPlayer(playerId)) return;
+    if (this.hasHumanSeat(playerId)) return;
+    if (this.kickedGuests.has(playerId) || this.hasPlayer(playerId)) {
+      throw new GameError('ROOM_UNAVAILABLE', 'Could not join that lobby');
+    }
     this.assertWaiting();
     if (this.players.length >= config.MAX_PLAYERS) throw new GameError('ROOM_FULL', 'This lobby is full');
   }
@@ -138,7 +147,7 @@ class Room {
     if (hostId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can remove players');
     this.assertWaiting();
     if (playerId === hostId) throw new GameError('CANNOT_KICK_SELF', 'The host cannot remove themself');
-    if (!this.players.some((p) => p.id === playerId && !p.isBot)) {
+    if (!this.hasHumanSeat(playerId)) {
       throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
     }
   }
@@ -147,11 +156,15 @@ class Room {
     this._assertCanManageBots(byPlayerId);
     const id = `b_${randomUUID()}`;
     this.assertCanSeat(id);
-    const availableNames = BOT_NAMES.filter(({ en, he }) => !this.players.some((p) => p.nickname === en || p.nickname === he));
-    const botName = availableNames[randomInt(availableNames.length)];
-    this.players.push({ id, nickname: botName.en, avatarId: randomInt(AVATAR_COUNT), isBot: true, botName });
+    this.players.push(this._botSeat(id));
     this.broadcast();
     return id;
+  }
+
+  _botSeat(id) {
+    const availableNames = BOT_NAMES.filter(({ en, he }) => !this.players.some((p) => p.nickname === en || p.nickname === he));
+    const botName = availableNames[randomInt(availableNames.length)];
+    return { id, nickname: botName.en, avatarId: randomInt(AVATAR_COUNT), isBot: true, botName };
   }
 
   removeBot(byPlayerId, botId) {
@@ -168,22 +181,30 @@ class Room {
   }
 
   /**
-   * Removes a player. Mid-match this terminates the match for everyone.
+   * Removes a guest or converts their seat to a bot for the rest of the match.
    * @param {string} playerId
    * @param {string} [reason] one of ABORT_REASONS (used when a match is aborted)
    */
   removePlayer(playerId, reason = ABORT_REASONS.PLAYER_LEFT) {
     const idx = this.players.findIndex((p) => p.id === playerId);
     if (idx === -1) return;
-    const [leaver] = this.players.splice(idx, 1);
+    const leaver = this.players[idx];
     this._clearGrace(playerId);
-    if (leaver.isBot) this.tokenBank.delete(playerId);
+    if (this.status === ROOM_STATUS.PLAYING && !leaver.isBot && this.players.some((p) => p.id !== playerId && !p.isBot)) {
+      this.players[idx] = { ...this._botSeat(playerId), temporary: true };
+      const personalities = Object.keys(PERSONALITIES);
+      this.botBrains.set(playerId, new BotPlayer(personalities[randomInt(personalities.length)], this.botRandom));
+      this._replaceHost(playerId);
+      this.transport.toRoom(this.code, S2C.GAME_EVENT, { type: 'seat_taken_over', playerId, nickname: leaver.nickname, at: Date.now() });
+      this.onConnectionChanged();
+      return;
+    }
 
+    this.players.splice(idx, 1);
+    if (leaver.isBot && !leaver.temporary) this.tokenBank.delete(playerId);
     if (this.hostId === playerId) {
-      const humans = this.players.filter((p) => !p.isBot);
-      const next = humans.find((p) => this.sessions.isConnected(p.id)) || humans[0];
-      this.hostId = next ? next.id : null;
-      if (!next) {
+      this._replaceHost(playerId);
+      if (!this.hostId) {
         for (const bot of this.players) this.tokenBank.delete(bot.id);
         this.players = [];
       }
@@ -196,8 +217,15 @@ class Room {
     }
   }
 
+  _replaceHost(playerId) {
+    if (this.hostId !== playerId) return;
+    const humans = this.players.filter((p) => !p.isBot);
+    const next = humans.find((p) => this.sessions.isConnected(p.id)) || humans[0];
+    this.hostId = next?.id ?? null;
+  }
+
   assertCanUpdateProfile(session, profile) {
-    if (profile.nickname !== undefined && profile.nickname !== session.nickname && this.hasPlayer(session.playerId)) {
+    if (profile.nickname !== undefined && profile.nickname !== session.nickname && this.hasHumanSeat(session.playerId)) {
       this.assertWaiting();
     }
   }
@@ -205,8 +233,8 @@ class Room {
   updateProfile(session, profile) {
     this.assertCanUpdateProfile(session, profile);
     Object.assign(session, profile);
-    const p = this.players.find((x) => x.id === session.playerId);
-    if (!p) return;
+    const p = this.players.find((x) => x.id === session.playerId && !x.isBot);
+    if (!p || (p.nickname === session.nickname && p.avatarId === session.avatarId)) return;
     p.nickname = session.nickname;
     p.avatarId = session.avatarId;
     this.broadcast();
@@ -214,15 +242,18 @@ class Room {
 
   /** Socket dropped (not an explicit leave): keep the seat for a grace period. */
   onPlayerDisconnected(playerId) {
-    if (!this.hasPlayer(playerId)) return;
+    if (!this.hasHumanSeat(playerId)) return;
     this._clearGrace(playerId);
     const t = setTimeout(() => {
       this.graceTimers.delete(playerId);
-      if (!this.hasPlayer(playerId) || this.sessions.isConnected(playerId)) return;
+      if (!this.hasHumanSeat(playerId) || this.sessions.isConnected(playerId)) return;
       const session = this.sessions.getByPlayerId(playerId);
-      if (session?.roomCode === this.code) session.roomCode = null;
+      if (session?.roomCode === this.code) {
+        session.roomCode = null;
+        session.lastSeen = Date.now();
+      }
       this.removePlayer(playerId, ABORT_REASONS.PLAYER_DISCONNECTED);
-    }, config.DISCONNECT_GRACE_MS);
+    }, this.disconnectGraceMs);
     t.unref?.();
     this.graceTimers.set(playerId, t);
     this.onConnectionChanged();
@@ -264,6 +295,12 @@ class Room {
       throw new GameError('PLAYERS_OFFLINE', 'Wait for offline players to reconnect or leave the lobby');
     }
 
+    // A rematch keeps the lineup, but its replacement bots get independent identities and wallets.
+    this.players = this.players.map((p) => {
+      if (!p.temporary) return p;
+      const { temporary, ...bot } = p;
+      return { ...bot, id: `b_${randomUUID()}` };
+    });
     const seatIds = shuffle(this.players.map((p) => p.id), this.setupRandom);
     const moveMs = config.TURN_SPEEDS[this.turnSpeed];
     const game = new JokerBluffGame(
@@ -343,7 +380,7 @@ class Room {
    * Only the shuffler's own state changes, so only they receive a new game_state.
    */
   shuffleHand(playerId, order) {
-    if (!this.game || !this.hasPlayer(playerId)) throw new GameError('NOT_PLAYING', 'No game in progress');
+    if (!this.game || !this.hasHumanSeat(playerId)) throw new GameError('NOT_PLAYING', 'No game in progress');
     this.game.shuffleHand(playerId, order);
     const state = this._matchStateFor(playerId);
     this.transport.toPlayer(playerId, S2C.GAME_STATE, state);
@@ -362,9 +399,15 @@ class Room {
   }
 
   pruneTokenBank() {
-    const botIds = new Set(this.players.filter((p) => p.isBot).map((p) => p.id));
+    const botIds = new Set(this.players.filter((p) => p.isBot && !p.temporary).map((p) => p.id));
     for (const id of this.tokenBank.keys()) {
       if (!botIds.has(id) && !this.sessions.getByPlayerId(id)) this.tokenBank.delete(id);
+    }
+  }
+
+  pruneKickedGuests() {
+    for (const id of this.kickedGuests) {
+      if (!this.sessions.getByPlayerId(id)) this.kickedGuests.delete(id);
     }
   }
 
@@ -386,7 +429,7 @@ class Room {
         isHost: p.id === this.hostId,
         connected: this._ready(p),
         ...(p.isBot ? { isBot: true, botName: p.botName } : {}),
-        tokens: this.tokenBalance(p.id),
+        tokens: p.temporary ? this.game.tokens.get(p.id) : this.tokenBalance(p.id),
       })),
       lieDeye: { ...config.LIE_DEYE },
     };
@@ -410,6 +453,7 @@ class Room {
     this._clearBotJob();
     this.botBrains.clear();
     this.botHistory = [];
+    this.players = this.players.filter((p) => !p.temporary);
     this.game = null;
     this.status = ROOM_STATUS.WAITING;
     this.lifecycleId = randomUUID();
@@ -448,8 +492,8 @@ class Room {
   /** Spent tokens leave the room bank immediately (they stay spent even if the match is aborted). */
   _syncTokenBank() {
     if (!this.game) return;
-    for (const id of this.game.seats) {
-      if (this.game.tokens.has(id)) this.tokenBank.set(id, this.game.tokens.get(id));
+    for (const { id, temporary } of this.players) {
+      if (!temporary && this.game.tokens.has(id)) this.tokenBank.set(id, this.game.tokens.get(id));
     }
   }
 
@@ -458,6 +502,7 @@ class Room {
     if (this.tokensSettled || !this.game?.result?.winnerId) return null;
     this.tokensSettled = true;
     const winnerId = this.game.result.winnerId;
+    if (this.players.some((p) => p.id === winnerId && p.temporary)) return null;
     const amount = config.LIE_DEYE.WIN_BONUS;
     const balance = this.tokenBalance(winnerId) + amount;
     this.tokenBank.set(winnerId, balance);

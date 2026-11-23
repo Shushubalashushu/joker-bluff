@@ -46,8 +46,8 @@ const until = async (fn, ms = 2000) => {
   throw new Error('condition not met in time');
 };
 
-async function withSocketServer(run) {
-  const server = createGameServer();
+async function withSocketServer(run, options) {
+  const server = createGameServer(options);
   const clients = [];
   try {
     await new Promise((resolve) => server.httpServer.listen(0, '127.0.0.1', resolve));
@@ -64,6 +64,31 @@ async function withSocketServer(run) {
     await server.close();
   }
 }
+
+test('the transport cap reserves admission for a known reconnecting guest', () =>
+  withSocketServer(async ({ server, connectGuest }) => {
+    const returning = await connectGuest({ nickname: 'Returning' });
+    returning.socket.close();
+    await until(() => server.io.engine.clientsCount === 0);
+    const guests = [];
+    for (let i = 0; i < 6; i++) guests.push(await connectGuest({ nickname: `Guest ${i}` }));
+    await assert.rejects(connectGuest({ nickname: 'New seat' }), (err) => err.data?.code === 'SERVER_BUSY');
+    await until(() => server.io.engine.clientsCount === 6);
+    const back = await connectGuest({ token: returning.session.token });
+    assert.equal(back.session.playerId, returning.session.playerId);
+    assert.equal(server.io.of('/').sockets.size, 7);
+  }, { maxOpenConnections: 8 }));
+
+test('a replacement socket shares the same guest packet budget', () =>
+  withSocketServer(async ({ connectGuest }) => {
+    const guest = await connectGuest({ nickname: 'Guest' });
+    for (let i = 0; i < config.RATE_LIMIT.MAX_EVENTS; i++) assert.equal((await guest.emit('time_sync')).ok, true);
+    const back = await connectGuest({ token: guest.session.token });
+    assert.equal(back.session.playerId, guest.session.playerId);
+    assert.equal((await back.emit('time_sync')).code, 'RATE_LIMITED');
+    const other = await connectGuest({ nickname: 'Other' });
+    assert.equal((await other.emit('time_sync')).ok, true);
+  }));
 
 function withWaitingLobby(names, run) {
   return withSocketServer(async ({ server, connectGuest }) => {
@@ -200,16 +225,46 @@ test('host kick is scoped to the waiting room and clears only the removed guest'
     assert.equal(server.sessions.getByPlayerId(target.playerId).roomCode, null);
     assert.equal(server.io.sockets.adapter.rooms.get(`room:${code}`).has(bob.socket.id), false);
     assert.equal((await host.emit('kick_player', target)).code, 'PLAYER_NOT_FOUND');
+    assert.equal((await bob.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
 
     bob.socket.close();
     const back = await connectGuest({ token: bob.session.token });
     await until(() => back.room === null && back.game === null);
     assert.equal(back.session.playerId, target.playerId);
+    assert.equal((await back.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
 
     assert.equal((await host.emit('start_game')).ok, true);
     await until(() => host.room.status === 'playing' && host.game);
     assert.equal((await host.emit('kick_player', { playerId: cat.session.playerId })).code, 'IN_PROGRESS');
     assert.equal(host.room.players.length, 4);
+  }));
+
+test('outsiders get the same denial for missing, full and active lobbies', () =>
+  withWaitingLobby(Array.from({ length: 8 }, (_, i) => `Player ${i}`), async ({ seated, code, connectGuest }) => {
+    const outsider = await connectGuest({ nickname: 'Guest' });
+    const missing = code === 'ABCDE' ? 'BCDEF' : 'ABCDE';
+    const unavailable = await outsider.emit('join_room', { code: missing });
+    assert.equal(unavailable.code, 'ROOM_UNAVAILABLE');
+    assert.deepEqual(await outsider.emit('join_room', { code }), unavailable);
+    assert.equal((await seated[0].emit('start_game')).ok, true);
+    assert.deepEqual(await outsider.emit('join_room', { code }), unavailable);
+  }));
+
+test('a guest reconnecting after a bot takeover cannot recover the old private hand', () =>
+  withWaitingLobby(['Host', 'Bob', 'Cat', 'Dan'], async ({ server, seated: [host, guest], code, connectGuest }) => {
+    const room = server.rooms.get(code);
+    room.disconnectGraceMs = 10;
+    assert.equal((await host.emit('start_game')).ok, true);
+    await until(() => guest.game?.hand);
+    guest.socket.close();
+    const id = guest.session.playerId;
+    await until(() => host.room?.players.some((p) => p.id === id && p.isBot));
+    const back = await connectGuest({ token: guest.session.token });
+    await until(() => back.game === null && back.room === null);
+    assert.equal((await back.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
+    assert.equal(back.session.playerId, id);
+    assert.equal(back.game, null);
+    assert.equal(room.status, 'playing');
   }));
 
 test('a live nickname edit updates every waiting client and survives a stale reconnect profile', { timeout: 10000 }, () =>
@@ -311,7 +366,7 @@ async function scenario(url, clients) {
 
   const bad = await bob.emit('join_room', { code: created.code === 'ZZZZZ' ? 'YYYYY' : 'ZZZZZ' });
   assert.equal(bad.ok, false);
-  assert.equal(bad.code, 'ROOM_NOT_FOUND');
+  assert.equal(bad.code, 'ROOM_UNAVAILABLE');
 
   assert.equal((await bob.emit('join_room', { code: created.code.toLowerCase() })).ok, true);
   assert.equal((await cat.emit('join_room', { code: created.code })).ok, true);
@@ -403,7 +458,7 @@ async function scenario(url, clients) {
   assert.equal(active.game.offers.length, 2);
   assert.equal((await active.emit('use_lie_deye')).ok, true);
   await until(() => active.game.lieDeye?.offerNumber === 2);
-  assert.equal(active.game.lieDeye.lieCount, 1, 'the rejected false claim now appears in the history');
+  assert.equal(active.game.lieDeye.lieCount, 0, 'the whole exchange shares one historical count');
   await active.emit('player_decision', { accept: false });
   await until(() => holder.game.phase === 'OFFER' && holder.game.hand.length === 3);
 
@@ -460,14 +515,14 @@ async function scenario(url, clients) {
   assert.deepEqual(back.game.hand.map((c) => c.id).sort(), handBefore);
   await until(() => observer.room.players.every((p) => p.connected));
 
-  // --- leaving mid-match terminates it for everyone and returns them to the lobby
+  // --- leaving mid-match preserves the seat under a bot and clears the human's view
   const leaver = active;
   const stayer = holder;
   assert.equal((await leaver.emit('leave_room')).ok, true);
-  await until(() => stayer.room?.status === 'waiting' && stayer.game === null);
-  assert.equal(stayer.room.players.length, 3);
-  const abort = stayer.events.find((e) => e.type === 'game_aborted');
-  assert.equal(abort.reason, 'player_left');
-  assert.equal(abort.playerId, leaver.session.playerId);
-  await until(() => leaver.room === null);
+  await until(() => stayer.room?.players.some((p) => p.id === leaver.session.playerId && p.isBot));
+  assert.equal(stayer.room.status, 'playing');
+  assert.equal(stayer.room.players.length, 4);
+  const takeover = stayer.events.find((e) => e.type === 'seat_taken_over');
+  assert.equal(takeover.playerId, leaver.session.playerId);
+  await until(() => leaver.room === null && leaver.game === null);
 }

@@ -223,6 +223,7 @@ test('a bot can force a third card after a private paid Lie Deye reading', () =>
   const game = new JokerBluffGame(['one', 'two', 'three', 'four'], { rng: randomFrom(73) });
   game.start();
   const { holderId, activeId } = game;
+  game.liesByPlayer.set(holderId, 1);
   const rank = game.getStateFor(holderId).hand.find((card) => !isJoker(card)).rank;
   game.requestCard(activeId, rank);
   const [first, second, third] = game.getStateFor(holderId).hand;
