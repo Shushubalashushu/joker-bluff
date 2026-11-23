@@ -14,7 +14,8 @@ const express = require('../../server/node_modules/express');
 const { createGameServer } = require('../../server/src/index');
 const { BotPlayer } = require('../../server/src/game/BotPlayer');
 const { findWinningRank } = require('../../server/src/game/deck');
-const { headers: [{ headers: securityHeaders }] } = require('../vercel.json');
+const { headers: [{ source: securityHeaderSource, headers: securityHeaders }] } = require('../vercel.json');
+const securityHeaderPath = new RegExp(`^${securityHeaderSource}$`);
 
 async function until(read, timeout = 6000) {
   const deadline = Date.now() + timeout;
@@ -117,6 +118,7 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
 
   server.app.use(express.static(output, {
     setHeaders(response) {
+      if (!securityHeaderPath.test(response.req.path)) return;
       for (const { key, value } of securityHeaders) response.setHeader(key, value);
     },
   }));
