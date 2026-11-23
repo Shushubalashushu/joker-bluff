@@ -7,6 +7,7 @@ import { PHASES } from '../../constants/events';
 import { useI18n } from '../../i18n';
 import { rich } from '../../i18n/rich';
 import { colors, fonts, gradients } from '../../theme';
+import { noTranslateProps } from '../../utils/webTranslation';
 
 const FELT_BORDER = 4;
 const FELT_PADDING = 6;
@@ -99,7 +100,7 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
           {game.requestedRank ? (
             <Animated.View entering={FadeIn} key={`ask-${game.turn}`} style={styles.bubble}>
               <Text style={[styles.bubbleText, compact && { fontSize: 14 }, textStyle]}>
-                {rich(t('table.gotAny'), { rank: <Text style={styles.bubbleRank}>{game.requestedRank}</Text> })}
+                {rich(t('table.gotAny'), { rank: <Text {...noTranslateProps} style={styles.bubbleRank}>{game.requestedRank}</Text> })}
               </Text>
             </Animated.View>
           ) : showClaimTransfer ? (

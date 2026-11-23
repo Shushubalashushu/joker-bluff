@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { I18nManager } from 'react-native';
+import { I18nManager, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { STORAGE_KEYS } from '../config';
 import common from './locales/common';
@@ -59,6 +59,12 @@ const I18nContext = createContext(null);
 export function LanguageProvider({ children }) {
   const [lang, setLangState] = useState(LANGS.EN);
   const changedLanguage = useRef(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      document.documentElement.lang = lang;
+    }
+  }, [lang]);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEYS.language)

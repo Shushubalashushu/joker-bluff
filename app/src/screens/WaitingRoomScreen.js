@@ -16,6 +16,7 @@ import { describeAbort } from '../utils/describeEvent';
 import { LIE_DEYE, MIN_PLAYERS } from '../config';
 import { colors, fonts, gradients, cartoonShadow } from '../theme';
 import { viewport, verticalScrollProps } from '../theme/layout';
+import { noTranslateProps } from '../utils/webTranslation';
 
 // Grayed-out look for the host's Start button while the table is short-handed.
 const DISABLED_GRADIENT = ['#C9C3D9', '#A59DBB'];
@@ -131,7 +132,7 @@ export default function WaitingRoomScreen() {
           {/* Room code */}
           <Animated.View entering={FadeIn} style={styles.codeCard}>
             <Text style={[styles.codeLabel, textStyle]}>{t('waiting.roomCode')}</Text>
-            <View style={styles.codeRow}>
+            <View {...noTranslateProps} style={styles.codeRow}>
               {room.code.split('').map((ch, i) => (
                 <View
                   key={i}
@@ -140,7 +141,7 @@ export default function WaitingRoomScreen() {
                     { width: codeTile, height: codeTile * 1.24, transform: [{ rotate: `${(i % 2 ? 1 : -1) * 3}deg` }] },
                   ]}
                 >
-                  <Text style={[styles.codeChar, { fontSize: codeTile * 0.64 }]}>{ch}</Text>
+                  <Text {...noTranslateProps} style={[styles.codeChar, { fontSize: codeTile * 0.64 }]}>{ch}</Text>
                 </View>
               ))}
             </View>

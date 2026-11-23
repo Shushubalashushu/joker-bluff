@@ -7,6 +7,7 @@ import { useI18n } from '../../i18n';
 import OfferDecisionButtons from './OfferDecisionButtons';
 import { rich } from '../../i18n/rich';
 import { colors, fonts, gradients } from '../../theme';
+import { noTranslateProps } from '../../utils/webTranslation';
 
 function RankPicker({ ranks, onPick, disabled, compact }) {
   const { t } = useI18n();
@@ -26,7 +27,7 @@ function RankPicker({ ranks, onPick, disabled, compact }) {
           accessibilityRole="button"
           accessibilityLabel={t('action.a11yAskRank', { rank: r })}
         >
-          <Text style={[styles.rankText, compact && { fontSize: 18 }]}>{r}</Text>
+          <Text {...noTranslateProps} style={[styles.rankText, compact && { fontSize: 18 }]}>{r}</Text>
         </Pressable>
       ))}
     </View>

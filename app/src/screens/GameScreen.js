@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { noTranslateProps } from '../utils/webTranslation';
 
 import PlayfulBackground from '../components/common/PlayfulBackground';
 import Avatar from '../components/common/Avatar';
@@ -392,7 +393,7 @@ export default function GameScreen() {
             <Ionicons name="exit-outline" size={22} color={colors.night} />
           </Pressable>
           <View style={styles.headerChip}>
-            <Text style={styles.headerChipText} numberOfLines={1} adjustsFontSizeToFit>{room.code}</Text>
+            <Text {...noTranslateProps} style={styles.headerChipText} numberOfLines={1} adjustsFontSizeToFit>{room.code}</Text>
             <Text style={[styles.headerChipText, styles.headerDetails, textStyle]}>
               {t('game.headerDetails', { turn: game.turn, cards: game.deckSize })}
             </Text>

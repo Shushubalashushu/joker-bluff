@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useI18n } from '../../i18n';
 import { colors, fonts, gradients } from '../../theme';
+import { noTranslateProps } from '../../utils/webTranslation';
 
 export const CARD_SIZES = {
   xs: { w: 30, h: 42, rank: 12, pip: 14, radius: 6 },
@@ -41,7 +42,7 @@ function JokerFace({ s }) {
         🃏
       </Text>
       {s.w >= 42 && (
-        <Text style={[styles.jokerText, { fontSize: s.rank * 0.6 }, textStyle]} allowFontScaling={false}>
+        <Text {...noTranslateProps} style={[styles.jokerText, { fontSize: s.rank * 0.6 }, textStyle]} allowFontScaling={false}>
           {t('hand.joker')}
         </Text>
       )}
@@ -54,7 +55,7 @@ function RankFace({ card, s }) {
   return (
     <View style={[styles.fill, styles.face]}>
       <View style={styles.corner}>
-        <Text style={[styles.rank, { fontSize: s.rank, color: suit.color }]} allowFontScaling={false}>
+        <Text {...noTranslateProps} style={[styles.rank, { fontSize: s.rank, color: suit.color }]} allowFontScaling={false}>
           {card.rank}
         </Text>
         <Text style={{ fontSize: s.rank * 0.75, color: suit.color, marginTop: -4 }} allowFontScaling={false}>

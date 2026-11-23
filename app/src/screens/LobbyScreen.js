@@ -25,6 +25,7 @@ import LanguageToggle from '../components/LanguageToggle';
 import { useI18n } from '../i18n';
 import { colors, fonts, gradients } from '../theme';
 import { viewport, verticalScrollProps } from '../theme/layout';
+import { noTranslateProps } from '../utils/webTranslation';
 
 function Logo({ scale = 1 }) {
   const { t, textStyle } = useI18n();
@@ -47,8 +48,8 @@ function Logo({ scale = 1 }) {
   return (
     <View style={styles.logo}>
       <Animated.Text style={[styles.logoEmoji, { fontSize: 64 * scale }, jokerStyle]}>🃏</Animated.Text>
-      <Text numberOfLines={1} style={[styles.logoLine, styles.logoTop, big, textStyle]}>{t('lobby.logoTop')}</Text>
-      <Text numberOfLines={1} style={[styles.logoLine, styles.logoBottom, big, textStyle]}>{t('lobby.logoBottom')}</Text>
+      <Text {...noTranslateProps} numberOfLines={1} style={[styles.logoLine, styles.logoTop, big, textStyle]}>{t('lobby.logoTop')}</Text>
+      <Text {...noTranslateProps} numberOfLines={1} style={[styles.logoLine, styles.logoBottom, big, textStyle]}>{t('lobby.logoBottom')}</Text>
       <Text style={[styles.tagline, textStyle]}>{t('lobby.tagline')}</Text>
     </View>
   );

@@ -2,6 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useI18n, LANGS } from '../i18n';
 import { colors, fonts, cartoonShadow } from '../theme';
+import { noTranslateProps } from '../utils/webTranslation';
 
 /**
  * 🌐 EN / עב pill. The active language is highlighted. The pill itself always
@@ -15,6 +16,7 @@ export default function LanguageToggle({ compact = false, style }) {
 
   return (
     <Pressable
+      {...noTranslateProps}
       onPress={toggleLang}
       hitSlop={8}
       accessibilityRole="button"
