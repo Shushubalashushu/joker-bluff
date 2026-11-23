@@ -18,7 +18,7 @@ import { viewport, verticalScrollProps } from '../../theme/layout';
  * window, so they don't inherit the app's safe-area context.
  */
 export default function GameOverModal({ visible, result, lastTransfer, economy = LIE_DEYE, players, seats = [], myId, isHost, onPlayAgain, onEndGame, onLeave }) {
-  const { t, tError, textStyle } = useI18n();
+  const { t, tError, lang, textStyle } = useI18n();
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   if (!result) return null;
@@ -54,7 +54,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
                 <Text style={styles.medal}>🏆</Text>
                 <Avatar avatarId={winner?.avatarId ?? 0} size={72} ring={colors.gold} />
                 <Text style={styles.podiumName} numberOfLines={1}>
-                  {playerName(winner, t)}
+                  {playerName(winner, t, lang)}
                 </Text>
                 <Text style={[styles.podiumSub, textStyle]}>{t('results.quad', { rank: result.winningRank })}</Text>
                 <Animated.View entering={ZoomIn.delay(700)} style={styles.bonus}>
@@ -66,7 +66,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
                   <Text style={styles.medal}>🤡</Text>
                   <Avatar avatarId={loser.avatarId} size={60} ring={colors.red} />
                   <Text style={styles.podiumName} numberOfLines={1}>
-                    {playerName(loser, t)}
+                    {playerName(loser, t, lang)}
                   </Text>
                   <Text style={[styles.podiumSub, { color: colors.red }, textStyle]}>{t('results.joker')}</Text>
                 </View>
@@ -78,7 +78,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
                 <Animated.View key={pid} entering={FadeInUp.delay(150 + i * 80)} style={styles.handRow}>
                   <View style={styles.handWho}>
                     <Text style={styles.handName} numberOfLines={1}>
-                      {pid === myId ? t('common.you') : playerName(byId[pid], t, 'results.left')}
+                      {pid === myId ? t('common.you') : playerName(byId[pid], t, lang, 'results.left')}
                     </Text>
                     {typeof tokensOf[pid] === 'number' && <Text style={styles.handTokens}>👁️ {tokensOf[pid]}</Text>}
                   </View>

@@ -84,7 +84,7 @@ To play locally, create a private lobby on any device or simulator. Invite frien
 |---|---|
 | Players | **Minimum 4**, maximum 8, including bots. The host’s Start button waits for enough seats and for seated humans to reconnect or lose their reserved seat. |
 | Deck | `N` players → first `N` ranks of `A K Q J 10 9 8 7`, × 4 suits, + 1 Joker = `4N + 1` cards (4–8 players) |
-| Deal | One random player gets **5** cards (the *holder*), the others get 4. The deal is redone if anyone starts with a winning hand. |
+| Deal | The server shuffles the seating order at each game start, including rematches. One random player gets **5** cards (the *holder*), the others get 4. The deal is redone if anyone starts with a winning hand. |
 | Turn | The seat right after the holder is the *active* player. They `request_card` (name a rank). |
 | Offers | The holder `offer_card`s **any** card face-down. After the first rejection, the requester may take either of the first two face-down offers or reject the second to force a third. |
 | 3rd offer | After 2 rejections the holder has exactly 3 cards in hand. They choose one, and it is **auto-accepted** (there is no decision phase). |
@@ -97,13 +97,11 @@ To play locally, create a private lobby on any device or simulator. Invite frien
 
 ### Practice with bots
 
-In a private lobby, the host can select **Add Bot** and tap the remove icon on any bot's tile. For solo practice, add three bots. You can also mix bots and humans in any of the eight seats. The lobby marks bots and translates their names and controls into English and Hebrew. Seats are fixed once play starts. End the game to change the lineup, or choose Play Again to keep it.
+In a private lobby, the host can select **Add Bot** and tap the remove icon on any bot's tile. For solo practice, add three bots. You can also mix bots and humans in any of the eight seats. Bots get random nicknames in English and Hebrew. They’re marked in the lobby and at the table. End the game to change the lineup, or choose Play Again to keep the roster and reshuffle the seats.
 
-- **Strategist** tends to accept early offers and feed plausible rank requests to help sets complete.
-- **Detective** tracks past claims and uses Lie Deye when the public history gives it a reason to check.
-- **Bluffer** makes occasional false claims and unpredictable requests.
+Each match privately assigns a mix of Strategists, Detectives and Bluffers. A bot's name and avatar stay with its lobby seat while its play style can change between matches. Strategists tend to trust new opponents and feed plausible requests. Detectives pay closer attention to past claims. Bluffers make occasional false claims and unexpected requests based on the cards and situation.
 
-Bots use server-side rules, with randomized choices and short delays. They receive their own hand, public state and recent public requests and claims. Any private Lie Deye reading requires spending a token through the normal game rules, and a reading gives the bot the same historical information a human would see. Bots usually take one of the first two cards. A suspicious pattern of public claims or a history of false claims learned through Lie Deye can make a bot reject the second card and force a third. Bots use the same turn rules, token balances and win conditions as humans.
+Bots use the same turn rules, token balances and win conditions as humans. They play from their own cards and public history, and spend a token to see a private Lie Deye reading. They favor building and protecting sets, can hold a freshly received Joker to slow its circulation, and usually take one of the first two offers. They can force a third offer when they have reason for suspicion. Bot moves take about 2–15 seconds and average 10 seconds when the clock allows the full range. Shorter clocks scale that range down.
 
 ### 👁️ Lie Deye tokens
 | | |
@@ -144,7 +142,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | Server → Client | Meaning |
 |---|---|
 | `session` | `{ token, playerId }`. The client stores `token` and sends it back in `auth` on reconnect to get its seat back. |
-| `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null`. Bot seats include `botPersonality` and `botNumber`. |
+| `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null`. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. |
 | `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
 | `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |

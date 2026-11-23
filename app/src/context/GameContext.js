@@ -20,8 +20,8 @@ const initialState = {
 
 function rememberPlayers(known, room, game) {
   const players = {};
-  for (const { id, nickname, avatarId, botPersonality, botNumber } of room?.players ?? []) {
-    players[id] = { nickname, avatarId, botPersonality, botNumber };
+  for (const { id, nickname, avatarId, isBot, botName } of room?.players ?? []) {
+    players[id] = { nickname, avatarId, isBot, botName };
   }
   for (const { id } of game?.seats ?? []) {
     if (!players[id] && known[id]) players[id] = known[id];

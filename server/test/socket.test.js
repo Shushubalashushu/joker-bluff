@@ -79,12 +79,17 @@ function withWaitingLobby(names, run) {
 
 test('the lobby host can manage bot seats and start solo play over Socket.IO', { timeout: 8000 }, () =>
   withWaitingLobby(['Host', 'Guest'], async ({ server, seated: [host, guest], code }) => {
+    server.rooms.get(code).botDelay = () => 10;
     assert.equal((await guest.emit('add_bot')).code, 'NOT_HOST');
     assert.equal((await host.emit('start_game')).code, 'NOT_ENOUGH_PLAYERS');
     const added = await host.emit('add_bot');
     assert.equal(added.ok, true);
     await until(() => guest.room.players.some((player) => player.id === added.botId));
-    assert.equal(guest.room.players.find((player) => player.id === added.botId).botPersonality, 'strategist');
+    const publicBot = guest.room.players.find((player) => player.id === added.botId);
+    assert.equal(publicBot.isBot, true);
+    assert.equal(publicBot.nickname, publicBot.botName.en);
+    assert.match(publicBot.botName.he, /[\u0590-\u05ff]/);
+    assert.equal(Object.hasOwn(publicBot, 'botPersonality'), false);
     assert.equal((await guest.emit('remove_bot', { botId: added.botId })).code, 'NOT_HOST');
     assert.equal((await host.emit('remove_bot', { botId: added.botId })).ok, true);
     await until(() => guest.room.players.length === 2);
@@ -93,8 +98,9 @@ test('the lobby host can manage bot seats and start solo play over Socket.IO', {
 
     for (let i = 0; i < 3; i++) assert.equal((await host.emit('add_bot')).ok, true);
     await until(() => host.room.players.length === 4);
-    const bots = host.room.players.filter((player) => player.botPersonality);
-    assert.deepEqual(bots.map((player) => player.botPersonality), ['strategist', 'detective', 'bluffer']);
+    const bots = host.room.players.filter((player) => player.isBot);
+    assert.equal(bots.length, 3);
+    assert.equal(new Set(bots.map((player) => player.nickname)).size, 3);
     assert.ok(bots.every((player) => player.connected && player.tokens === 4 && !player.isHost));
     assert.equal(server.sessions.size, 2);
     const waitingId = host.room.lifecycleId;

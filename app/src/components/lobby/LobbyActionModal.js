@@ -28,7 +28,7 @@ export default function LobbyActionModal({ action, online, onClose, onSubmit }) 
 }
 
 function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmit }) {
-  const { t, tError, textStyle, alignStart } = useI18n();
+  const { t, tError, lang, textStyle, alignStart } = useI18n();
   const editing = action.kind === 'rename';
   const removingBot = action.kind === 'removeBot';
   const removeTitle = removingBot ? 'bots.remove' : 'waiting.kick';
@@ -75,7 +75,7 @@ function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmi
           />
         ) : (
           <Text style={[styles.body, textStyle]}>
-            {t(removingBot ? 'bots.removeConfirm' : 'waiting.kickConfirm', { name: playerName(action.player, t) })}
+            {t(removingBot ? 'bots.removeConfirm' : 'waiting.kickConfirm', { name: playerName(action.player, t, lang) })}
           </Text>
         )}
         {!!error && <Text style={[styles.error, textStyle]} accessibilityRole="alert">{tError(error)}</Text>}

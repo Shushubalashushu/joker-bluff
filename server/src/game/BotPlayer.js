@@ -4,10 +4,21 @@ const { C2S, PHASES } = require('../shared/events');
 const { isJoker, findWinningRank } = require('./deck');
 
 const PERSONALITIES = Object.freeze({
-  strategist: { nickname: 'Strategist', avatarId: 0, bluff: 0.07, feed: 12, read: 0.34, reject: 0.08, rejectSecond: 0.08 },
-  detective: { nickname: 'Detective', avatarId: 7, bluff: 0.10, feed: 8, read: 0.80, reject: 0.15, rejectSecond: 0.18 },
-  bluffer: { nickname: 'Bluffer', avatarId: 4, bluff: 0.29, feed: 7, read: 0.28, reject: 0.13, rejectSecond: 0.12 },
+  strategist: { bluff: 0.06, feed: 12, read: 0.34, reject: 0.08, rejectSecond: 0.08 },
+  detective: { bluff: 0.10, feed: 8, read: 0.80, reject: 0.15, rejectSecond: 0.18 },
+  bluffer: { bluff: 0.23, feed: 7, read: 0.28, reject: 0.13, rejectSecond: 0.12 },
 });
+
+/** A triangular distribution with a 13s mode and a 10s mean over the full 2–15s range. */
+function botThinkDelay(maxDelay, random = Math.random) {
+  const max = Math.min(15000, maxDelay);
+  if (max <= 0) return 0;
+  const min = Math.min(2000, max);
+  const mode = 11 / 13;
+  const roll = random();
+  const fraction = roll < mode ? Math.sqrt(roll * mode) : 1 - Math.sqrt((1 - roll) * (1 - mode));
+  return Math.round(min + fraction * (max - min));
+}
 
 function countRank(cards, rank) {
   return cards.filter((card) => card.rank === rank).length;
@@ -42,12 +53,12 @@ class BotPlayer {
   }
 
   _request(state, history) {
-    const available = state.ranks.filter((rank) => countRank(state.hand, rank) < 4);
+    const available = state.ranks.map((rank) => ({ rank, matching: countRank(state.hand, rank) }))
+      .filter(({ matching }) => matching < 4);
     const likelyRank = history.findLast((event) => event.type === 'card_requested' && event.playerId === state.holderId)?.rank;
-    const feint = this.personality === 'bluffer' && this.random() < 0.18;
-    const rank = weightedPick(available, (candidate) => {
-      const matching = countRank(state.hand, candidate);
-      return feint ? 4 - matching : (3 ** matching) * (candidate === likelyRank ? 1.5 : 1);
+    const feint = this.personality === 'bluffer' && !available.some(({ matching }) => matching === 3) && this.random() < 0.12;
+    const { rank } = weightedPick(available, ({ rank, matching }) => {
+      return feint ? 4 - matching : (9 ** matching) * (rank === likelyRank ? 1.5 : 1);
     }, this.random);
     return { event: C2S.REQUEST_CARD, payload: { rank } };
   }
@@ -56,19 +67,22 @@ class BotPlayer {
     // Only the giver's view contains the cards already on the table.
     const owned = [...state.hand, ...state.offers.map((offer) => offer.card).filter(Boolean)];
     const matching = countRank(owned, state.requestedRank);
-    const holdsJoker = owned.some(isJoker);
+    const joker = owned.find(isJoker);
+    const freshJoker = joker && state.lastTransfer?.cardId === joker.id;
     const previousRequest = history.findLast((event) => event.type === 'card_requested' && event.playerId === state.activeId && event.turn < state.turn);
     const oddRequest = matching >= 3;
     const winningPass = state.hand.find((card) => findWinningRank(owned.filter((other) => other.id !== card.id)));
     const card = winningPass ?? weightedPick(state.hand, (candidate) => {
-      // Pass the Joker when possible. Keep other ranks moving as well.
-      if (isJoker(candidate)) return 14;
-      if (!holdsJoker && candidate.rank === state.requestedRank && !oddRequest) {
-        return this.traits.feed + (previousRequest?.rank === candidate.rank ? 3 : 0);
-      }
-      return 5 - countRank(owned, candidate.rank);
+      // An automatic handoff just sends the Joker around the same clockwise ring.
+      if (isJoker(candidate)) return (freshJoker ? 4 : 9) + 4 * state.offers.length;
+      const base = !joker && candidate.rank === state.requestedRank && !oddRequest
+        ? this.traits.feed + (previousRequest?.rank === candidate.rank ? 3 : 0)
+        : 5;
+      return base / (5 ** (countRank(owned, candidate.rank) - 1));
     }, this.random);
-    const claimedNoCard = this.random() < (matching === 0 ? 0.65 : this.traits.bluff);
+    // A false claim is more convincing when the offered card cannot disprove it on receipt.
+    const claimChance = matching === 0 ? 0.38 : this.traits.bluff * (card.rank === state.requestedRank ? 0.1 : 1);
+    const claimedNoCard = this.random() < claimChance;
     return { event: C2S.OFFER_CARD, payload: { cardId: card.id, claimedNoCard } };
   }
 
@@ -79,12 +93,11 @@ class BotPlayer {
     const knownLies = Math.min(3, this.knownLieCounts.get(state.holderId) ?? 0);
     const holdsJoker = state.hand.some(isJoker);
     const nearSet = countRank(state.hand, state.requestedRank) >= 3;
-    const early = state.turn <= 4;
     const pastOffers = history.filter((e) => e.type === 'card_offered' && e.playerId === state.holderId && e.turn < state.turn).slice(-8);
     const repeatedClaims = pastOffers.filter((e) => e.claimedNoCard).length >= 2;
     const changedStory = state.offers.some((offer) => offer !== pending && offer.claimedNoCard !== pending.claimedNoCard);
-    const suspicious = (pending.claimedNoCard && (knownLies > 0 || repeatedClaims || (!early && nearSet))) || changedStory ||
-      (!early && knownLies >= 2 && nearSet);
+    const suspicious = (pending.claimedNoCard && (knownLies > 0 || repeatedClaims || (pastOffers.length > 0 && nearSet))) ||
+      changedStory || (knownLies >= 2 && nearSet);
     if (state.canUseLieDeye && !holdsJoker && suspicious && !state.offers.some((offer) => offer.lieDeyeUsed) && this.random() < this.traits.read) {
       return { event: C2S.USE_LIE_DEYE };
     }
@@ -103,10 +116,10 @@ class BotPlayer {
       return { event: C2S.PLAYER_DECISION, payload: { accept: true, offerIndex: offer.number - 1 } };
     }
 
-    const trustEarly = early && this.personality === 'strategist';
-    const rejectChance = holdsJoker || trustEarly ? 0.03 : this.traits.reject + (suspicious ? 0.17 : 0);
+    const firstImpression = this.personality === 'strategist' && pastOffers.length === 0 && !suspicious;
+    const rejectChance = holdsJoker || firstImpression ? 0.03 : this.traits.reject + (suspicious ? 0.17 : 0);
     return { event: C2S.PLAYER_DECISION, payload: { accept: this.random() >= rejectChance } };
   }
 }
 
-module.exports = { BotPlayer, PERSONALITIES };
+module.exports = { BotPlayer, PERSONALITIES, botThinkDelay };

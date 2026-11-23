@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setTimeout: wait } = require('node:timers/promises');
-const { BotPlayer } = require('../src/game/BotPlayer');
+const { BotPlayer, botThinkDelay } = require('../src/game/BotPlayer');
 const { JokerBluffGame } = require('../src/game/JokerBluffGame');
 const { buildDeck, findWinningRank, isJoker } = require('../src/game/deck');
 const { Room } = require('../src/rooms/Room');
@@ -28,7 +28,7 @@ function setupRoom(humanCount, botCount, options) {
     },
     toPlayer: (id) => recipients.add(id),
   };
-  const room = new Room({ code: 'TESTS', sessions, transport, botDelay: () => 0, ...options });
+  const room = new Room({ code: 'TESTS', sessions, transport, botDelay: () => 0, setupRandom: randomFrom(537), ...options });
   const humans = Array.from({ length: humanCount }, (_, i) => {
     const session = sessions.create();
     session.socketId = `socket${i}`;
@@ -41,7 +41,7 @@ function setupRoom(humanCount, botCount, options) {
 }
 
 test('Strategist feeds a plausible request and recognizes holdings that make it unlikely', () => {
-  const bot = new BotPlayer('strategist', () => 0.4);
+  const bot = new BotPlayer('strategist', () => 0.55);
   const { cards } = buildDeck(4);
   const aces = cards.filter((card) => card.rank === 'A');
   const kings = cards.filter((card) => card.rank === 'K');
@@ -67,7 +67,9 @@ test('Detective waits for a reason to spend, remembers only a paid reading and c
   assert.deepEqual(bot.choose(decision, []), { event: C2S.PLAYER_DECISION, payload: { accept: true } });
   assert.equal(bot.knownLieCounts.size, 0);
   const later = { ...decision, turn: 6 };
-  assert.equal(bot.choose(later, []).event, C2S.USE_LIE_DEYE);
+  assert.equal(bot.choose(later, []).event, C2S.PLAYER_DECISION);
+  const history = [{ type: 'card_offered', playerId: holderId, turn: 3, claimedNoCard: false }];
+  assert.equal(bot.choose(later, history).event, C2S.USE_LIE_DEYE);
   assert.equal(bot.knownLieCounts.size, 0);
   const reading = { ...later, canUseLieDeye: false, offers: [{ ...pending, lieDeyeUsed: true }],
     lieDeye: { giverId: holderId, lieCount: 2 } };
@@ -98,19 +100,69 @@ test('bots force a third offer only occasionally and only with corroborating evi
   assert.deepEqual(takesSecond.choose(state, history), { event: C2S.PLAYER_DECISION, payload: { accept: true, offerIndex: 1 } });
 });
 
-test('Bluffer can make an unexpected request, while Strategist usually accepts early', () => {
+test('Bluffer can make an unexpected request but pursues a nearly complete set', () => {
   const { ranks, cards } = buildDeck(4);
   const hand = cards.filter((card) => card.rank === 'A').slice(0, 3);
   hand.push(cards.find((card) => card.rank === 'K'));
   const request = { phase: PHASES.REQUEST, holderId: 'giver', ranks, hand };
   const strategist = new BotPlayer('strategist', () => 0.10);
-  const rolls = [0.10, 0.50];
-  const bluffer = new BotPlayer('bluffer', () => rolls.shift());
   assert.equal(strategist.choose(request, []).payload.rank, 'A');
-  assert.equal(bluffer.choose(request, []).payload.rank, 'Q');
+  const bluffer = new BotPlayer('bluffer', () => 0.10);
+  assert.equal(bluffer.choose(request, []).payload.rank, 'A');
+  const rolls = [0.10, 0.35];
+  const feinting = new BotPlayer('bluffer', () => rolls.shift());
+  const splitHand = [...hand.slice(0, 2), hand[3], cards.find((card) => card.rank === 'Q')];
+  assert.equal(feinting.choose({ ...request, hand: splitHand }, []).payload.rank, 'K');
   const decision = { phase: PHASES.DECISION, holderId: 'giver', turn: 2, requestedRank: 'A', hand,
     offers: [{ number: 1, claimedNoCard: true, card: null }] };
   assert.equal(strategist.choose(decision, []).payload.accept, true);
+});
+
+test('Bluffer claim rates follow the cards and stay the same across early and late turns', () => {
+  const { cards } = buildDeck(4);
+  const hand = [...cards.filter((card) => card.rank === 'K'), cards.find((card) => card.rank === 'Q')];
+  const offer = { phase: PHASES.OFFER, requestedRank: 'K', activeId: 'requester', hand, offers: [] };
+  const countClaims = (state) => {
+    const bot = new BotPlayer('bluffer', randomFrom(719));
+    return Array.from({ length: 2000 }, () => bot.choose(state, []).payload.claimedNoCard).filter(Boolean).length;
+  };
+  const early = countClaims({ ...offer, turn: 1 });
+  assert.equal(early, countClaims({ ...offer, turn: 20 }));
+  assert.ok(early > 350 && early < 550, `false claims: ${early}/2000`);
+  const honest = countClaims({ ...offer, turn: 1, requestedRank: 'A' });
+  assert.ok(honest > 650 && honest < 880, `honest claims: ${honest}/2000`);
+});
+
+test('a freshly received Joker is offered less often even though a winning pass takes priority', () => {
+  const { cards } = buildDeck(4);
+  const joker = cards.find(isJoker);
+  const hand = ['A', 'K', 'Q', 'J'].map((rank) => cards.find((card) => card.rank === rank));
+  const state = { phase: PHASES.OFFER, turn: 4, requestedRank: 'A', hand: [...hand, joker], offers: [] };
+  const countJokers = (offer) => {
+    const bot = new BotPlayer('strategist', randomFrom(921));
+    return Array.from({ length: 2000 }, () => bot.choose(offer, []).payload.cardId).filter((id) => id === joker.id).length;
+  };
+  const fresh = { ...state, lastTransfer: { cardId: joker.id } };
+  const freshCount = countJokers(fresh);
+  assert.ok(freshCount > 150 && freshCount < 450, `fresh: ${freshCount}/2000`);
+  assert.ok(countJokers(state) > freshCount * 1.5);
+  const winning = { ...fresh, hand: [...cards.filter((card) => card.rank === 'A'), joker] };
+  assert.equal(new BotPlayer('bluffer', () => 0).choose(winning, []).payload.cardId, joker.id);
+});
+
+test('bot pacing samples a broad 2–15s range and adapts to shorter decision clocks', () => {
+  const random = randomFrom(731);
+  const delays = Array.from({ length: 10000 }, () => botThinkDelay(600000, random));
+  const mean = delays.reduce((total, delay) => total + delay, 0) / delays.length;
+  assert.ok(mean > 9800 && mean < 10200, `mean delay: ${mean}ms`);
+  assert.ok(Math.min(...delays) < 2500 && Math.max(...delays) > 14500);
+  assert.ok(delays.some((delay) => delay >= 6800 && delay <= 7200));
+  assert.ok(delays.every((delay) => delay >= 2000 && delay <= 15000));
+  const short = Array.from({ length: 100 }, () => botThinkDelay(9980, random));
+  assert.ok(short.every((delay) => delay > 2000 && delay <= 9980));
+  assert.ok(new Set(short).size > 90);
+  assert.equal(botThinkDelay(180, random), 180);
+  assert.equal(botThinkDelay(0, random), 0);
 });
 
 test('a bot can force a third card after a private paid Lie Deye reading', () => {
@@ -188,7 +240,8 @@ for (const humanCount of [1, 2, 3]) {
             hand: state.hand.map((card) => card.id),
             ownedHand: room.game.hands.get(id).map((card) => card.id),
             otherCardsHidden: state.seats.every((seat) => !Object.hasOwn(seat, 'hand')) &&
-              (state.holderId === id || state.offers.every((offer) => offer.card === null)),
+              (state.holderId === id || state.offers.every((offer) => offer.card === null)) &&
+              (!state.lastTransfer?.cardId || state.lastTransfer.toId === id),
             privateReadingValid: state.lieDeye === null || (state.activeId === id && state.lieDeyeWallet.usedThisGame > 0 &&
               state.offers.at(-1).lieDeyeUsed),
             historyMatches: history.every((item, index) => {
@@ -282,13 +335,42 @@ test('bot seats share the room cap and are skipped when the host leaves', () => 
   const [host, guest] = humans;
   try {
     assert.throws(() => room.addBot(host.playerId), { code: 'ROOM_FULL' });
-    assert.deepEqual(room.publicState().players.filter((player) => player.botPersonality).map((player) => player.botNumber),
-      [1, 1, 1, 2, 2, 2]);
+    const bots = room.publicState().players.filter((player) => player.isBot);
+    assert.equal(bots.length, botIds.length);
+    assert.equal(new Set(bots.map((bot) => bot.botName.en)).size, botIds.length);
+    assert.equal(new Set(bots.map((bot) => bot.botName.he)).size, botIds.length);
     room.removeBot(host.playerId, botIds[0]);
     assert.equal(room.tokenBank.has(botIds[0]), false);
     room.removePlayer(host.playerId);
     assert.equal(room.hostId, guest.playerId);
     assert.equal(room.connectedCount, 1);
+  } finally {
+    room.destroy();
+  }
+});
+
+test('fresh games and rematches shuffle the same lobby roster and draw hidden personalities', () => {
+  const { room, botIds } = setupRoom(1, 3, { botDelay: () => 60000 });
+  try {
+    const { players } = room.publicState();
+    const lobbyOrder = players.map((player) => player.id);
+    const positions = lobbyOrder.map(() => new Set());
+    const personalitiesById = new Map(botIds.map((id) => [id, new Set()]));
+    for (let i = 0; i < 100; i++) {
+      room.startGame(room.hostId, { rematch: i > 0 });
+      assert.deepEqual(room.publicState().players, players);
+      assert.deepEqual(new Set(room.game.seats), new Set(lobbyOrder));
+      assert.equal(room.game.activeId, room.game.seats[(room.game.seats.indexOf(room.game.holderId) + 1) % lobbyOrder.length]);
+      room.game.seats.forEach((id, position) => positions[position].add(id));
+      for (const [id, brain] of room.botBrains) personalitiesById.get(id).add(brain.personality);
+      assert.equal(new Set([...room.botBrains.values()].map((brain) => brain.personality)).size, 3);
+      const publicBots = room.publicState().players.filter((player) => player.isBot);
+      assert.ok(publicBots.every((bot) => Object.keys(bot).length === 8 && !Object.hasOwn(bot, 'botPersonality')));
+      // Reset only the lifecycle gate to exercise setup repeatedly without playing 100 full games.
+      room.status = 'finished';
+    }
+    assert.ok(positions.every((seat) => seat.size === lobbyOrder.length));
+    assert.ok([...personalitiesById.values()].every((choices) => choices.size === 3));
   } finally {
     room.destroy();
   }

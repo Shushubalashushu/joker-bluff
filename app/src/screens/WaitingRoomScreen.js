@@ -24,9 +24,9 @@ const DISABLED_GRADIENT = ['#C9C3D9', '#A59DBB'];
 const DISABLED_LIP = '#7E7696';
 
 function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
-  const { t, textStyle } = useI18n();
-  const name = playerName(player, t);
-  const actionLabel = isMe ? 'waiting.editNickname' : player.botPersonality ? 'bots.removePlayer' : 'waiting.kickPlayer';
+  const { t, lang, textStyle } = useI18n();
+  const name = playerName(player, t, lang);
+  const actionLabel = isMe ? 'waiting.editNickname' : player.isBot ? 'bots.removePlayer' : 'waiting.kickPlayer';
   return (
     <Animated.View entering={ZoomIn.springify()} style={[styles.tile, isMe && styles.tileMe]}>
       {player.isHost && <Text style={styles.crown}>👑</Text>}
@@ -47,7 +47,7 @@ function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
         <Text style={styles.tileName} numberOfLines={1} ellipsizeMode="tail">{name}</Text>
       </View>
       <Text style={[styles.tileSub, textStyle]}>
-        {t(player.botPersonality ? 'bots.badge' : isMe ? 'common.you' : player.connected ? 'waiting.ready' : 'waiting.offline')}
+        {t(player.isBot ? 'bots.badge' : isMe ? 'common.you' : player.connected ? 'waiting.ready' : 'waiting.offline')}
       </Text>
       {typeof player.tokens === 'number' && (
         <View style={styles.tokenPill} accessibilityLabel={t('ld.a11yTokens', { count: player.tokens })}>
@@ -188,7 +188,7 @@ export default function WaitingRoomScreen() {
           <View style={styles.grid}>
             {players.map((player) => {
               const isMe = player.id === playerId;
-              const kind = isMe ? 'rename' : player.botPersonality ? 'removeBot' : 'kick';
+              const kind = isMe ? 'rename' : player.isBot ? 'removeBot' : 'kick';
               return (
                 <PlayerTile
                   key={player.id}

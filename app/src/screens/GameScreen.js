@@ -113,7 +113,7 @@ export default function GameScreen() {
     setConcealed,
   } = useGame();
   const { playSfx } = useAudio();
-  const { t, tError, textStyle } = useI18n();
+  const { t, tError, lang, textStyle } = useI18n();
   const r = useResponsive();
 
   const [selectedCardId, setSelectedCardId] = useState(null);
@@ -145,8 +145,8 @@ export default function GameScreen() {
 
   const playersById = useMemo(() => Object.fromEntries((room?.players || []).map((p) => [p.id, p])), [room]);
   const nameOf = useCallback(
-    (id) => playerName(playersById[id] ?? knownPlayers[id], t),
-    [playersById, knownPlayers, t]
+    (id) => playerName(playersById[id] ?? knownPlayers[id], t, lang),
+    [playersById, knownPlayers, t, lang]
   );
 
   // Clear selection whenever the turn/offer step changes or the card leaves my hand.

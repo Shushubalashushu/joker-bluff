@@ -1,14 +1,21 @@
 'use strict';
 
-const { randomUUID } = require('node:crypto');
+const { randomInt, randomUUID } = require('node:crypto');
 const config = require('../config');
 const { S2C, C2S } = require('../shared/events');
+const { AVATAR_COUNT } = require('../utils/sanitize');
+const { shuffle } = require('../game/deck');
 const { JokerBluffGame, GameError } = require('../game/JokerBluffGame');
-const { BotPlayer, PERSONALITIES } = require('../game/BotPlayer');
+const { BotPlayer, PERSONALITIES, botThinkDelay } = require('../game/BotPlayer');
 
 const ROOM_STATUS = Object.freeze({ WAITING: 'waiting', PLAYING: 'playing', FINISHED: 'finished' });
 const ACTION_GRACE_MS = 250; // latency allowance before the server auto-plays
 const BOT_HISTORY_LIMIT = 192;
+const BOT_NAMES = [
+  ['Bamba', 'במבה'], ['Boba', 'בובה'], ['Coco', 'קוקו'], ['Gigi', 'ג׳יג׳י'],
+  ['Kiwi', 'קיווי'], ['Lola', 'לולה'], ['Mika', 'מיקה'], ['Mochi', 'מוצ׳י'],
+  ['Nori', 'נורי'], ['Peanut', 'בוטן'], ['Pip', 'פיפ'], ['Sunny', 'סאני'], ['Zuzu', 'זוזו'],
+].map(([en, he]) => Object.freeze({ en, he }));
 
 /** Why a match was terminated early (sent to clients in a `game_aborted` event). */
 const ABORT_REASONS = Object.freeze({
@@ -38,13 +45,13 @@ class Room {
    * @param {import('../sessions/SessionStore').SessionStore} deps.sessions
    * @param {{toRoom: Function, toPlayer: Function}} deps.transport
    */
-  constructor({ code, sessions, transport, botRandom = Math.random, botDelay = (reviewing) => (reviewing ? 1050 : 650) + Math.random() * 900 }) {
+  constructor({ code, sessions, transport, botRandom = Math.random, botDelay = botThinkDelay, setupRandom = Math.random }) {
     this.code = code;
     this.lifecycleId = randomUUID();
     this.sessions = sessions;
     this.transport = transport;
     this.hostId = null;
-    /** @type {{id: string, nickname: string, avatarId: number, botPersonality?: string, botNumber?: number}[]} seat order */
+    /** @type {{id: string, nickname: string, avatarId: number, isBot?: boolean, botName?: {en: string, he: string}}[]} lobby order */
     this.players = [];
     this.status = ROOM_STATUS.WAITING;
     /** @type {JokerBluffGame|null} */
@@ -55,6 +62,7 @@ class Room {
     this.botHistory = [];
     this.botRandom = botRandom;
     this.botDelay = botDelay;
+    this.setupRandom = setupRandom;
     /** @type {Map<string, NodeJS.Timeout>} playerId -> disconnect grace timer */
     this.graceTimers = new Map();
     /**
@@ -90,7 +98,7 @@ class Room {
   }
 
   _ready(player) {
-    return !!player && (!!player.botPersonality || this.sessions.isConnected(player.id));
+    return !!player && (!!player.isBot || this.sessions.isConnected(player.id));
   }
 
   nicknameOf(playerId) {
@@ -128,7 +136,7 @@ class Room {
     if (hostId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can remove players');
     this.assertWaiting();
     if (playerId === hostId) throw new GameError('CANNOT_KICK_SELF', 'The host cannot remove themself');
-    if (!this.players.some((p) => p.id === playerId && !p.botPersonality)) {
+    if (!this.players.some((p) => p.id === playerId && !p.isBot)) {
       throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
     }
   }
@@ -137,23 +145,16 @@ class Room {
     this._assertCanManageBots(byPlayerId);
     const id = `b_${randomUUID()}`;
     this.assertCanSeat(id);
-    const bots = this.players.filter((p) => p.botPersonality);
-    const counts = Object.keys(PERSONALITIES).map((personality) => ({
-      personality, count: bots.filter((p) => p.botPersonality === personality).length,
-    }));
-    counts.sort((a, b) => a.count - b.count);
-    const botPersonality = counts[0].personality;
-    const { nickname, avatarId } = PERSONALITIES[botPersonality];
-    let botNumber = 1;
-    while (bots.some((bot) => bot.botPersonality === botPersonality && bot.botNumber === botNumber)) botNumber++;
-    this.players.push({ id, nickname: botNumber === 1 ? nickname : `${nickname} ${botNumber}`, avatarId, botPersonality, botNumber });
+    const availableNames = BOT_NAMES.filter(({ en, he }) => !this.players.some((p) => p.nickname === en || p.nickname === he));
+    const botName = availableNames[randomInt(availableNames.length)];
+    this.players.push({ id, nickname: botName.en, avatarId: randomInt(AVATAR_COUNT), isBot: true, botName });
     this.broadcast();
     return id;
   }
 
   removeBot(byPlayerId, botId) {
     this._assertCanManageBots(byPlayerId);
-    if (!this.players.some((p) => p.id === botId && p.botPersonality)) {
+    if (!this.players.some((p) => p.id === botId && p.isBot)) {
       throw new GameError('BOT_NOT_FOUND', 'That bot is no longer in the lobby');
     }
     this.removePlayer(botId);
@@ -174,10 +175,10 @@ class Room {
     if (idx === -1) return;
     const [leaver] = this.players.splice(idx, 1);
     this._clearGrace(playerId);
-    if (leaver.botPersonality) this.tokenBank.delete(playerId);
+    if (leaver.isBot) this.tokenBank.delete(playerId);
 
     if (this.hostId === playerId) {
-      const humans = this.players.filter((p) => !p.botPersonality);
+      const humans = this.players.filter((p) => !p.isBot);
       const next = humans.find((p) => this.sessions.isConnected(p.id)) || humans[0];
       this.hostId = next ? next.id : null;
       if (!next) {
@@ -250,8 +251,9 @@ class Room {
       throw new GameError('PLAYERS_OFFLINE', 'Wait for offline players to reconnect or leave the lobby');
     }
 
+    const seatIds = shuffle(this.players.map((p) => p.id), this.setupRandom);
     const game = new JokerBluffGame(
-      this.players.map((p) => p.id),
+      seatIds,
       {
         isConnected: (id) => this._ready(this.players.find((p) => p.id === id)),
         // Carry-over: each player brings their current room balance into the match.
@@ -261,8 +263,13 @@ class Room {
     const events = game.start();
     this.game = game;
     this.botHistory = [];
-    this.botBrains = new Map(this.players.filter((p) => p.botPersonality)
-      .map((p) => [p.id, new BotPlayer(p.botPersonality, this.botRandom)]));
+    this.botBrains = new Map();
+    let personalities = [];
+    for (const player of this.players) {
+      if (!player.isBot) continue;
+      if (personalities.length === 0) personalities = shuffle(Object.keys(PERSONALITIES), this.setupRandom);
+      this.botBrains.set(player.id, new BotPlayer(personalities.pop(), this.botRandom));
+    }
     this.lifecycleId = randomUUID();
     this.tokensSettled = false;
     this.status = ROOM_STATUS.PLAYING;
@@ -340,7 +347,7 @@ class Room {
   }
 
   pruneTokenBank() {
-    const botIds = new Set(this.players.filter((p) => p.botPersonality).map((p) => p.id));
+    const botIds = new Set(this.players.filter((p) => p.isBot).map((p) => p.id));
     for (const id of this.tokenBank.keys()) {
       if (!botIds.has(id) && !this.sessions.getByPlayerId(id)) this.tokenBank.delete(id);
     }
@@ -362,7 +369,7 @@ class Room {
         avatarId: p.avatarId,
         isHost: p.id === this.hostId,
         connected: this._ready(p),
-        ...(p.botPersonality ? { botPersonality: p.botPersonality, botNumber: p.botNumber } : {}),
+        ...(p.isBot ? { isBot: true, botName: p.botName } : {}),
         tokens: this.tokenBalance(p.id),
       })),
       lieDeye: { ...config.LIE_DEYE },
@@ -373,7 +380,7 @@ class Room {
   broadcast() {
     this.transport.toRoom(this.code, S2C.ROOM_STATE, this.publicState());
     for (const p of this.players) {
-      if (!p.botPersonality) this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
+      if (!p.isBot) this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
     }
   }
 
@@ -469,8 +476,8 @@ class Room {
     const step = game.step;
     if (this.botJob?.game === game && this.botJob.step === step) return;
     this._clearBotJob();
-    const reviewing = !!game.getStateFor(playerId).lieDeye;
-    const delay = Math.max(0, Math.min(this.botDelay(reviewing), game.deadline - Date.now() - 20));
+    const remaining = Math.max(0, game.deadline - Date.now() - 20);
+    const delay = Math.min(this.botDelay(remaining), remaining);
     const job = { game, step, timer: null };
     job.timer = setTimeout(() => {
       if (this.botJob !== job) return;
