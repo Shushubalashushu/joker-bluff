@@ -5,6 +5,8 @@ export const C2S = Object.freeze({
   JOIN_ROOM: 'join_room',
   LEAVE_ROOM: 'leave_room',
   KICK_PLAYER: 'kick_player',
+  BAN_PLAYER: 'ban_player',
+  UNBAN_PLAYER: 'unban_player',
   ADD_BOT: 'add_bot',
   REMOVE_BOT: 'remove_bot',
   SET_TURN_SPEED: 'set_turn_speed',

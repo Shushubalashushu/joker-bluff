@@ -54,7 +54,7 @@ class Room {
     this.hostId = null;
     /** @type {{id: string, nickname: string, avatarId: number, isBot?: boolean, botName?: {en: string, he: string}}[]} lobby order */
     this.players = [];
-    this.kickedGuests = new Set();
+    this.moderation = new Map();
     this.status = ROOM_STATUS.WAITING;
     this.turnSpeed = config.DEFAULT_TURN_SPEED;
     /** @type {JokerBluffGame|null} */
@@ -132,7 +132,7 @@ class Room {
 
   assertCanSeat(playerId) {
     if (this.hasHumanSeat(playerId)) return;
-    if (this.kickedGuests.has(playerId) || this.hasPlayer(playerId)) {
+    if (this.moderation.get(playerId)?.banned || this.hasPlayer(playerId)) {
       throw new GameError('ROOM_UNAVAILABLE', 'Could not join that lobby');
     }
     this.assertWaiting();
@@ -143,13 +143,25 @@ class Room {
     if (this.status !== ROOM_STATUS.WAITING) throw new GameError('IN_PROGRESS', 'That game has already started');
   }
 
-  assertCanKick(hostId, playerId) {
-    if (hostId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can remove players');
+  _assertCanModerate(hostId) {
+    if (hostId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can moderate this lobby');
     this.assertWaiting();
+  }
+
+  recordRemoval(hostId, playerId, { ban = false } = {}) {
+    this._assertCanModerate(hostId);
     if (playerId === hostId) throw new GameError('CANNOT_KICK_SELF', 'The host cannot remove themself');
-    if (!this.hasHumanSeat(playerId)) {
-      throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
-    }
+    const player = this.players.find((seat) => seat.id === playerId && !seat.isBot);
+    if (!player) throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
+    const kicks = (this.moderation.get(playerId)?.kicks ?? 0) + Number(!ban);
+    this.moderation.set(playerId, { kicks, banned: ban || kicks >= 2, nickname: player.nickname });
+  }
+
+  unbanPlayer(hostId, playerId) {
+    this._assertCanModerate(hostId);
+    if (!this.moderation.get(playerId)?.banned) throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer banned');
+    this.moderation.delete(playerId);
+    this._sendRoomState(this.hostId, this.publicState());
   }
 
   addBot(byPlayerId) {
@@ -405,10 +417,14 @@ class Room {
     }
   }
 
-  pruneKickedGuests() {
-    for (const id of this.kickedGuests) {
-      if (!this.sessions.getByPlayerId(id)) this.kickedGuests.delete(id);
+  pruneModeration() {
+    let bansChanged = false;
+    for (const [id, record] of this.moderation) {
+      if (this.sessions.getByPlayerId(id)) continue;
+      this.moderation.delete(id);
+      bansChanged ||= record.banned;
     }
+    if (bansChanged && this.status === ROOM_STATUS.WAITING) this._sendRoomState(this.hostId, this.publicState());
   }
 
   // ------------------------------------------------------------ broadcasting
@@ -435,11 +451,25 @@ class Room {
     };
   }
 
-  /** Everyone gets the same room state, but each player gets their OWN redacted game state. */
+  _sendRoomState(playerId, state) {
+    if (playerId === this.hostId && state.status === ROOM_STATUS.WAITING) {
+      const bannedPlayers = [];
+      for (const [id, { banned, nickname }] of this.moderation) {
+        if (banned) bannedPlayers.push({ id, nickname });
+      }
+      this.transport.toPlayer(playerId, S2C.ROOM_STATE, { ...state, bannedPlayers });
+    } else {
+      this.transport.toPlayer(playerId, S2C.ROOM_STATE, state);
+    }
+  }
+
+  /** Each guest gets their own redacted views, including host-only moderation data. */
   broadcast() {
-    this.transport.toRoom(this.code, S2C.ROOM_STATE, this.publicState());
+    const state = this.publicState();
     for (const p of this.players) {
-      if (!p.isBot) this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
+      if (p.isBot) continue;
+      this._sendRoomState(p.id, state);
+      this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
     }
   }
 

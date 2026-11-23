@@ -9,7 +9,7 @@ const initialState = {
   connection: 'connecting', // 'connecting' | 'online' | 'offline'
   connectError: null, // last connect_error message (shown in the banner)
   playerId: null,
-  room: null, // public lobby state (same for everyone)
+  room: null, // lobby state, with moderation details for the host
   game: null, // MY redacted view of the game (server decides what I can see)
   clockOffset: 0, // serverNow - Date.now()
   events: [], // public events emitted together for one server state update
@@ -141,6 +141,8 @@ export function GameProvider({ children }) {
   const joinRoom = useCallback((roomCode) => emitAck(C2S.JOIN_ROOM, { ...profilePayload(), code: roomCode }), []);
   const leaveRoom = useCallback(() => emitAck(C2S.LEAVE_ROOM, { code }), [code]);
   const kickPlayer = useCallback((playerId) => emitAck(C2S.KICK_PLAYER, { lifecycleId, playerId }), [lifecycleId]);
+  const banPlayer = useCallback((playerId) => emitAck(C2S.BAN_PLAYER, { lifecycleId, playerId }), [lifecycleId]);
+  const unbanPlayer = useCallback((playerId) => emitAck(C2S.UNBAN_PLAYER, { lifecycleId, playerId }), [lifecycleId]);
   const addBot = useCallback(() => emitAck(C2S.ADD_BOT, { lifecycleId }), [lifecycleId]);
   const removeBot = useCallback((botId) => emitAck(C2S.REMOVE_BOT, { lifecycleId, botId }), [lifecycleId]);
   const setTurnSpeed = useCallback((speed) => emitAck(C2S.SET_TURN_SPEED, { lifecycleId, speed }), [lifecycleId]);
@@ -180,6 +182,8 @@ export function GameProvider({ children }) {
       joinRoom,
       leaveRoom,
       kickPlayer,
+      banPlayer,
+      unbanPlayer,
       addBot,
       removeBot,
       setTurnSpeed,
@@ -202,6 +206,8 @@ export function GameProvider({ children }) {
       joinRoom,
       leaveRoom,
       kickPlayer,
+      banPlayer,
+      unbanPlayer,
       addBot,
       removeBot,
       setTurnSpeed,

@@ -10,8 +10,8 @@ import { colors, fonts, gradients, cartoonShadow } from '../../theme';
 import { viewport } from '../../theme/layout';
 import { playerName } from '../../utils/playerName';
 
-export default function LobbyActionModal({ action, online, onClose, onSubmit }) {
-  const [busy, setBusy] = useState(false);
+export default function LobbyActionModal({ action, online, onClose, onSubmit, onBan }) {
+  const [busy, setBusy] = useState(null);
   const cancel = () => {
     if (busy) return;
     Keyboard.dismiss();
@@ -21,39 +21,40 @@ export default function LobbyActionModal({ action, online, onClose, onSubmit }) 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={cancel} statusBarTranslucent>
       <SafeAreaProvider style={viewport}>
-        <ActionSheet action={action} online={online} busy={busy} setBusy={setBusy} onCancel={cancel} onClose={onClose} onSubmit={onSubmit} />
+        <ActionSheet action={action} online={online} busy={busy} setBusy={setBusy} onCancel={cancel} onClose={onClose} onSubmit={onSubmit} onBan={onBan} />
       </SafeAreaProvider>
     </Modal>
   );
 }
 
-function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmit }) {
+function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmit, onBan }) {
   const { t, tError, lang, textStyle, alignStart } = useI18n();
   const editing = action.kind === 'rename';
-  const removingBot = action.kind === 'removeBot';
-  const removeTitle = removingBot ? 'bots.remove' : 'waiting.kick';
+  const moderating = action.kind === 'moderate';
+  const name = playerName(action.player, t, lang);
   const [nickname, setNickname] = useState(action.player.nickname);
   const [error, setError] = useState(null);
   const { targetRef, liftStyle } = useKeyboardLift({ margin: 100, enabled: editing });
   const cleanName = nickname.trim();
   const canSubmit = online && (!editing || (!!cleanName && cleanName !== action.player.nickname));
 
-  const submit = async () => {
+  const run = async (kind, send) => {
     if (busy || !canSubmit) return;
     Keyboard.dismiss();
-    setBusy(true);
+    setBusy(kind);
     setError(null);
-    const result = await onSubmit(editing ? cleanName : action.player.id);
-    setBusy(false);
+    const result = await send(editing ? cleanName : action.player.id);
+    setBusy(null);
     if (result.ok) onClose();
     else setError(result);
   };
+  const submit = () => run('submit', onSubmit);
 
   return (
     <SafeAreaView style={styles.backdrop}>
       <Animated.View style={[styles.sheet, liftStyle]} accessibilityViewIsModal>
         <Text style={[styles.title, textStyle]} accessibilityRole="header">
-          {t(editing ? 'waiting.editNickname' : removeTitle)}
+          {t(editing ? 'waiting.editNickname' : moderating ? 'waiting.managePlayers' : 'bots.remove', { name })}
         </Text>
         {editing ? (
           <TextInput
@@ -75,31 +76,35 @@ function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmi
           />
         ) : (
           <Text style={[styles.body, textStyle]}>
-            {t(removingBot ? 'bots.removeConfirm' : 'waiting.kickConfirm', { name: playerName(action.player, t, lang) })}
+            {t(moderating ? 'waiting.moderateHelp' : 'bots.removeConfirm', { name })}
           </Text>
         )}
         {!!error && <Text style={[styles.error, textStyle]} accessibilityRole="alert">{tError(error)}</Text>}
         <View style={styles.buttons}>
           <CartoonButton
-            title={t('common.cancel')}
+            title={t(moderating ? 'waiting.kick' : 'common.cancel')}
             size="sm"
             gradient={gradients.blue}
             lipColor={colors.darkBlue}
             style={styles.button}
-            disabled={busy}
-            onPress={onCancel}
+            disabled={!!busy || (moderating && !canSubmit)}
+            loading={moderating && busy === 'submit'}
+            onPress={moderating ? submit : onCancel}
           />
           <CartoonButton
-            title={t(editing ? 'common.save' : removeTitle)}
+            title={t(editing ? 'common.save' : moderating ? 'waiting.ban' : 'bots.remove')}
             size="sm"
             gradient={editing ? gradients.success : gradients.danger}
             lipColor={editing ? colors.darkGreen : colors.darkRed}
             style={styles.button}
-            disabled={!canSubmit}
-            loading={busy}
-            onPress={submit}
+            disabled={!!busy || !canSubmit}
+            loading={busy === (moderating ? 'ban' : 'submit')}
+            onPress={moderating ? () => run('ban', onBan) : submit}
           />
         </View>
+        {moderating && (
+          <CartoonButton title={t('common.cancel')} size="sm" disabled={!!busy} onPress={onCancel} />
+        )}
       </Animated.View>
     </SafeAreaView>
   );

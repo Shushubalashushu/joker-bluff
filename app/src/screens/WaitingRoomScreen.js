@@ -28,7 +28,8 @@ const DISABLED_LIP = '#7E7696';
 function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
   const { t, lang, textStyle } = useI18n();
   const name = playerName(player, t, lang);
-  const actionLabel = isMe ? 'waiting.editNickname' : player.isBot ? 'bots.removePlayer' : 'waiting.kickPlayer';
+  const actionLabel = isMe ? 'waiting.editNickname' : player.isBot ? 'bots.removePlayer' : 'waiting.managePlayers';
+  const actionIcon = isMe ? 'pencil-outline' : player.isBot ? 'person-remove-outline' : 'ellipsis-horizontal';
   return (
     <Animated.View entering={ZoomIn.springify()} style={[styles.tile, isMe && styles.tileMe]}>
       {player.isHost && <Text style={styles.crown}>👑</Text>}
@@ -41,7 +42,7 @@ function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
           accessibilityLabel={t(actionLabel, { name })}
           style={[styles.tileAction, actionDisabled && styles.tileActionDisabled]}
         >
-          <Ionicons name={isMe ? 'pencil-outline' : 'person-remove-outline'} size={19} color={isMe ? colors.purple : colors.red} />
+          <Ionicons name={actionIcon} size={19} color={player.isBot ? colors.red : colors.purple} />
         </Pressable>
       )}
       <Avatar avatarId={player.avatarId} size={avatarSize} style={!player.connected && { opacity: 0.4 }} />
@@ -85,14 +86,16 @@ function AbortBanner({ notice, playerId, onClose }) {
 }
 
 export default function WaitingRoomScreen() {
-  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, renamePlayer, addBot, removeBot, setTurnSpeed, notice, clearNotice } = useGame();
+  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, banPlayer, unbanPlayer,
+    renamePlayer, addBot, removeBot, setTurnSpeed, notice, clearNotice } = useGame();
   const r = useResponsive();
-  const { t, tError, textStyle } = useI18n();
+  const { t, tError, textStyle, alignStart } = useI18n();
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [action, setAction] = useState(null);
 
   const isHost = room.hostId === playerId;
+  const bannedPlayers = isHost ? room.bannedPlayers ?? [] : [];
   const players = room.players;
   const n = players.length;
   const minPlayers = Math.max(MIN_PLAYERS, room.minPlayers ?? MIN_PLAYERS);
@@ -194,10 +197,29 @@ export default function WaitingRoomScreen() {
               onPress={() => run('bot', addBot)}
             />
           )}
+          {bannedPlayers.length > 0 && (
+            <View style={styles.bannedSection}>
+              <Text accessibilityRole="header" style={[styles.bannedTitle, alignStart]}>{t('waiting.bannedPlayers')}</Text>
+              {bannedPlayers.map(({ id, nickname }) => (
+                <View key={id} style={styles.bannedRow}>
+                  <Text numberOfLines={1} style={[styles.bannedName, alignStart]}>{nickname}</Text>
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={t('waiting.unbanPlayer', { name: nickname })}
+                    disabled={!!busy || connection !== 'online'}
+                    onPress={() => run('unban', () => unbanPlayer(id))}
+                    style={({ pressed }) => [styles.unban, (pressed || busy || connection !== 'online') && styles.tileActionDisabled]}
+                  >
+                    <Text style={[styles.unbanText, textStyle]}>{t('waiting.unban')}</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          )}
           <View style={styles.grid}>
             {players.map((player) => {
               const isMe = player.id === playerId;
-              const kind = isMe ? 'rename' : player.isBot ? 'removeBot' : 'kick';
+              const kind = isMe ? 'rename' : player.isBot ? 'removeBot' : 'moderate';
               return (
                 <PlayerTile
                   key={player.id}
@@ -250,6 +272,7 @@ export default function WaitingRoomScreen() {
           online={connection === 'online'}
           onClose={() => setAction(null)}
           onSubmit={action.kind === 'rename' ? renamePlayer : action.kind === 'removeBot' ? removeBot : kickPlayer}
+          onBan={banPlayer}
         />
       )}
     </View>
@@ -340,6 +363,12 @@ const styles = StyleSheet.create({
   },
   ldTitle: { fontFamily: fonts.bold, color: colors.yellow, fontSize: 15 },
   ldText: { fontFamily: fonts.regular, color: colors.cream, fontSize: 12, textAlign: 'center' },
+  bannedSection: { backgroundColor: colors.cream, borderRadius: 16, borderWidth: 2, borderColor: colors.night, padding: 10 },
+  bannedTitle: { fontFamily: fonts.bold, color: colors.purple, fontSize: 16 },
+  bannedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bannedName: { flex: 1, minWidth: 0, fontFamily: fonts.semibold, color: colors.night, fontSize: 15 },
+  unban: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8 },
+  unbanText: { fontFamily: fonts.bold, color: colors.purple, fontSize: 15 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 12 },
   tile: {
     width: '46%',

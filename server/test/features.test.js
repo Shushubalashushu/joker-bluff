@@ -467,7 +467,7 @@ test('unchanged profile updates do not publish snapshots', () => {
     room.updateProfile(player, {});
     assert.deepEqual(sent, []);
     room.updateProfile(player, { avatarId: 3 });
-    assert.equal(sent.filter(({ event }) => event === 'room_state').length, 1);
+    assert.equal(sent.filter(({ event }) => event === 'room_state').length, players.length);
   } finally {
     room.destroy();
   }
@@ -552,7 +552,7 @@ test('room manager: kicking an offline guest clears their seat and disconnect ti
   room.onPlayerDisconnected(guest.playerId);
   assert.ok(room.graceTimers.has(guest.playerId));
 
-  rooms.kickPlayer(room, host.playerId, guest.playerId);
+  rooms.removeGuest(room, host.playerId, guest.playerId);
   assert.equal(guest.roomCode, null);
   assert.equal(room.hasPlayer(guest.playerId), false);
   assert.equal(room.graceTimers.has(guest.playerId), false);

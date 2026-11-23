@@ -80,6 +80,12 @@ function countdown(page) {
   return page.getByRole('progressbar', { name: /seconds left|נותרו/ });
 }
 
+async function tryRejoiningInHebrew(page, code) {
+  await button(page, 'משחק פרטי').click();
+  await page.getByRole('textbox', { name: 'הזנת קוד חדר' }).fill(code);
+  await button(page, 'הצטרפות').click();
+}
+
 async function shownSeconds(page) {
   const timer = countdown(page);
   await timer.waitFor();
@@ -103,7 +109,7 @@ function prepareSecondOffer(room) {
   assert.fail('expected a bot to face a second offer');
 }
 
-test('desktop and mobile players can read bilingual rules, use both clocks and keep playing', { timeout: 90000 }, async (t) => {
+test('desktop and mobile players can moderate bilingual lobbies, read rules, and keep playing', { timeout: 100000 }, async (t) => {
   const output = await mkdtemp(join(tmpdir(), 'jokerbluff-turn-speed-'));
   const server = createGameServer();
   let browser;
@@ -161,6 +167,24 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
   assert.equal(await guest.getByRole('radio').count(), 0);
   await checkRules(guest, 'he');
 
+  for (let strike = 1; strike <= 2; strike++) {
+    await button(host, 'Manage Guest Tester').click();
+    await host.getByRole('heading', { name: 'Manage Guest Tester' }).waitFor();
+    await button(host, 'Kick').click();
+    await tryRejoiningInHebrew(guest, room.code);
+    if (strike === 1) {
+      await guest.getByText(/רגיל.*2 דקות/).waitFor();
+      assert.equal(await host.getByRole('heading', { name: 'Banned players' }).count(), 0);
+    }
+  }
+  const joinDenied = guest.getByText(/לא ניתן להצטרף ללובי הזה/);
+  await joinDenied.waitFor();
+  await host.getByRole('heading', { name: 'Banned players' }).waitFor();
+  await button(host, 'Unban Guest Tester').click();
+  await host.getByRole('heading', { name: 'Banned players' }).waitFor({ state: 'detached' });
+  await button(guest, 'הצטרפות').click();
+  await guest.getByText(/רגיל.*2 דקות/).waitFor();
+
   await desktopFast.click();
   await guest.getByText(/מהיר.*15 שניות/).waitFor();
   await desktopFast.and(host.locator('[aria-checked="true"]')).waitFor();
@@ -172,6 +196,26 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
   const box = await mobileStandard.boundingBox();
   assert.ok(box && box.x >= 0 && box.x + box.width <= 375);
   await mobileStandard.click();
+  await guest.getByText(/רגיל.*2 דקות/).waitFor();
+
+  await button(host, 'ניהול השחקן \u2068Guest Tester\u2069').click();
+  const hebrewBan = button(host, 'חסימה');
+  await hebrewBan.waitFor();
+  const banBox = await hebrewBan.boundingBox();
+  assert.ok(banBox && banBox.x >= 0 && banBox.x + banBox.width <= 375);
+  await hebrewBan.click();
+  await tryRejoiningInHebrew(guest, room.code);
+  await joinDenied.waitFor();
+  await host.getByRole('heading', { name: 'שחקנים חסומים' }).waitFor();
+  await button(host, 'החלפת שפה (אנגלית / עברית)').click();
+  await host.getByRole('heading', { name: 'Banned players' }).waitFor();
+  await host.setViewportSize({ width: 1280, height: 800 });
+  await button(host, 'Switch language (English / Hebrew)').click();
+  await host.getByRole('heading', { name: 'שחקנים חסומים' }).waitFor();
+  await host.setViewportSize({ width: 375, height: 667 });
+  await button(host, 'ביטול חסימה של \u2068Guest Tester\u2069').click();
+  await host.getByRole('heading', { name: 'שחקנים חסומים' }).waitFor({ state: 'detached' });
+  await button(guest, 'הצטרפות').click();
   await guest.getByText(/רגיל.*2 דקות/).waitFor();
 
   for (let i = 0; i < 2; i++) {
@@ -252,9 +296,7 @@ test('desktop and mobile players can read bilingual rules, use both clocks and k
   assert.equal(room.game, gameBeforeLeave);
   assert.equal(room.players.length, 4);
 
-  await button(host, 'משחק פרטי').click();
-  await host.getByRole('textbox', { name: 'הזנת קוד חדר' }).fill(room.code);
-  await button(host, 'הצטרפות').click();
+  await tryRejoiningInHebrew(host, room.code);
   await host.getByText(/לא ניתן להצטרף ללובי הזה/).waitFor();
 
   room.disconnectGraceMs = 30;

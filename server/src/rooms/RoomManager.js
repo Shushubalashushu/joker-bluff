@@ -73,9 +73,8 @@ class RoomManager {
     if (room.isEmpty) this._delete(room);
   }
 
-  kickPlayer(room, hostId, playerId) {
-    room.assertCanKick(hostId, playerId);
-    room.kickedGuests.add(playerId);
+  removeGuest(room, hostId, playerId, options) {
+    room.recordRemoval(hostId, playerId, options);
     this.leaveRoom(this.sessions.getByPlayerId(playerId));
     this.transport.toPlayer(playerId, S2C.ROOM_KICKED);
   }
@@ -108,7 +107,7 @@ class RoomManager {
         removed++;
       } else {
         room.pruneTokenBank();
-        room.pruneKickedGuests();
+        room.pruneModeration();
       }
     }
     return removed;

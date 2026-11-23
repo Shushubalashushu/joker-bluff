@@ -132,9 +132,10 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | Client → Server | Payload |
 |---|---|
 | `create_room` | `{ nickname, avatarId }` → `{ code }` |
-| `join_room` | `{ code, nickname, avatarId }`. Unavailable lobbies return `ROOM_UNAVAILABLE` to outsiders. A kicked guest session cannot rejoin the same room. |
+| `join_room` | `{ code, nickname, avatarId }`. Unavailable lobbies return `ROOM_UNAVAILABLE` to outsiders. |
 | `leave_room` | `{ code }` |
-| `kick_player` | `{ lifecycleId, playerId }` (host only, in the waiting room) |
+| `kick_player` | `{ lifecycleId, playerId }` (host only, in the waiting room). A first kick allows rejoining. A second kick bans that guest session from the room. |
+| `ban_player` / `unban_player` | `{ lifecycleId, playerId }` (host only, in the waiting room). Ban removes the guest and blocks rejoining immediately. Unban also clears the kick count. |
 | `add_bot` | `{ lifecycleId }` → `{ botId }` (host only, in the waiting room) |
 | `remove_bot` | `{ lifecycleId, botId }` (host only, in the waiting room) |
 | `set_turn_speed` | `{ lifecycleId, speed: 'fast' \| 'standard' }` (host only, in the waiting room) |
@@ -150,7 +151,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | Server → Client | Meaning |
 |---|---|
 | `session` | `{ token, playerId }`. The client stores `token` and sends it back in `auth` on reconnect to get its seat back. |
-| `room_state` | Public lobby state, the same for everyone, or `null`. It includes `turnSpeed` and each player's Lie Deye balance. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. |
+| `room_state` | Lobby state or `null`. It includes `turnSpeed` and each player's Lie Deye balance. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. Only the waiting-room host receives `bannedPlayers`. |
 | `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
 | `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. `seat_taken_over` identifies a departing player whose seat is now a bot. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |

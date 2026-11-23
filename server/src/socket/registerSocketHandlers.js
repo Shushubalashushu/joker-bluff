@@ -188,10 +188,14 @@ function registerSocketHandlers(io, { sessions, rooms, addressOf, maxOpenForNewG
       rooms.leaveRoom(session);
     });
 
-    on(C2S.KICK_PLAYER, (p) => {
-      if (typeof p.playerId !== 'string' || !PLAYER_ID.test(p.playerId)) throw new GameError('BAD_PAYLOAD', 'Invalid player');
-      rooms.kickPlayer(currentRoom(p.lifecycleId ?? null), session.playerId, p.playerId);
-    });
+    for (const event of [C2S.KICK_PLAYER, C2S.BAN_PLAYER, C2S.UNBAN_PLAYER]) {
+      on(event, (p) => {
+        if (typeof p.playerId !== 'string' || !PLAYER_ID.test(p.playerId)) throw new GameError('BAD_PAYLOAD', 'Invalid player');
+        const room = currentRoom(p.lifecycleId ?? null);
+        if (event === C2S.UNBAN_PLAYER) room.unbanPlayer(session.playerId, p.playerId);
+        else rooms.removeGuest(room, session.playerId, p.playerId, { ban: event === C2S.BAN_PLAYER });
+      });
+    }
 
     on(C2S.ADD_BOT, (p) => ({ botId: currentRoom(p.lifecycleId ?? null).addBot(session.playerId) }));
 

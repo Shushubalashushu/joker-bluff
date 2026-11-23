@@ -8,7 +8,7 @@ const { findWinningRank } = require('../src/game/deck');
 const config = require('../src/config');
 
 const MOVE_EVENTS = new Set(['request_card', 'offer_card', 'player_decision', 'use_lie_deye']);
-const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player', 'add_bot', 'remove_bot', 'set_turn_speed']);
+const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player', 'ban_player', 'unban_player', 'add_bot', 'remove_bot', 'set_turn_speed']);
 
 /** Small client wrapper that tracks the latest pushed state. */
 function client(url, auth = {}) {
@@ -207,7 +207,7 @@ test('40 students on one IP can reconnect, retry room codes and play across five
     assert.ok((await Promise.all(events)).every((event) => event.ok));
   }));
 
-test('host kick is scoped to the waiting room and clears only the removed guest', { timeout: 10000 }, () =>
+test('the first kick clears the seat and the second kick bans the same guest after reconnecting', { timeout: 10000 }, () =>
   withWaitingLobby(['Host', 'Bob', 'Cat', 'Dan', 'Eli'], async ({ server, seated, code, connectGuest }) => {
     const [host, bob, cat] = seated;
     const target = { playerId: bob.session.playerId };
@@ -225,18 +225,59 @@ test('host kick is scoped to the waiting room and clears only the removed guest'
     assert.equal(server.sessions.getByPlayerId(target.playerId).roomCode, null);
     assert.equal(server.io.sockets.adapter.rooms.get(`room:${code}`).has(bob.socket.id), false);
     assert.equal((await host.emit('kick_player', target)).code, 'PLAYER_NOT_FOUND');
-    assert.equal((await bob.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
+    assert.deepEqual(host.room.bannedPlayers, []);
 
     bob.socket.close();
     const back = await connectGuest({ token: bob.session.token });
     await until(() => back.room === null && back.game === null);
     assert.equal(back.session.playerId, target.playerId);
-    assert.equal((await back.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
+    assert.equal((await back.emit('join_room', { code })).ok, true);
+    assert.equal((await host.emit('kick_player', target)).ok, true);
+    await until(() => back.kicks === 1 && back.room === null);
+    assert.deepEqual(host.room.bannedPlayers, [{ id: target.playerId, nickname: 'Bob' }]);
+    assert.equal(Object.hasOwn(cat.room, 'bannedPlayers'), false);
+    const missing = code === 'ABCDE' ? 'BCDEF' : 'ABCDE';
+    const denial = await back.emit('join_room', { code: missing });
+    assert.equal(denial.code, 'ROOM_UNAVAILABLE');
+    assert.deepEqual(await back.emit('join_room', { code }), denial);
 
     assert.equal((await host.emit('start_game')).ok, true);
     await until(() => host.room.status === 'playing' && host.game);
     assert.equal((await host.emit('kick_player', { playerId: cat.session.playerId })).code, 'IN_PROGRESS');
+    assert.equal((await host.emit('ban_player', { playerId: cat.session.playerId })).code, 'IN_PROGRESS');
+    assert.equal((await host.emit('unban_player', target)).code, 'IN_PROGRESS');
     assert.equal(host.room.players.length, 4);
+  }));
+
+test('direct bans block immediately and the next host can unban a guest with a clean kick count', () =>
+  withWaitingLobby(['Host', 'Bob', 'Cat', 'Dan'], async ({ seated, code }) => {
+    const [host, bob, cat, dan] = seated;
+    const target = { playerId: bob.session.playerId };
+    assert.equal((await cat.emit('ban_player', target)).code, 'NOT_HOST');
+    assert.equal((await host.emit('ban_player', { playerId: host.session.playerId })).code, 'CANNOT_KICK_SELF');
+    assert.equal((await host.emit('ban_player', target)).ok, true);
+    await until(() => bob.kicks === 1 && bob.room === null);
+    assert.equal((await bob.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
+    assert.equal((await cat.emit('unban_player', target)).code, 'NOT_HOST');
+    assert.equal((await host.emit('unban_player', { ...target, lifecycleId: 'old-lobby' })).code, 'STALE_ACTION');
+
+    assert.equal((await host.emit('leave_room')).ok, true);
+    await until(() => cat.room.hostId === cat.session.playerId);
+    assert.deepEqual(cat.room.bannedPlayers, [{ id: target.playerId, nickname: 'Bob' }]);
+    assert.equal(Object.hasOwn(dan.room, 'bannedPlayers'), false);
+    assert.equal((await cat.emit('unban_player', target)).ok, true);
+    assert.deepEqual(cat.room.bannedPlayers, []);
+
+    for (let strike = 0; strike < 2; strike++) {
+      assert.equal((await bob.emit('join_room', { code })).ok, true);
+      assert.equal((await cat.emit('kick_player', target)).ok, true);
+    }
+    assert.equal((await bob.emit('join_room', { code })).code, 'ROOM_UNAVAILABLE');
+    assert.equal((await cat.emit('unban_player', target)).ok, true);
+    assert.equal((await bob.emit('join_room', { code })).ok, true);
+    assert.equal((await cat.emit('kick_player', target)).ok, true);
+    assert.equal((await bob.emit('join_room', { code })).ok, true);
+    assert.deepEqual(cat.room.bannedPlayers, []);
   }));
 
 test('outsiders get the same denial for missing, full and active lobbies', () =>
