@@ -77,13 +77,11 @@ export default {
     'action.mutedTrading': "You're muted - {a} & {b} are trading.",
 
     // ---- Player claim ("I don't have it")
-    'nocard.button': "I don't have it",
-    'nocard.armed': "Pick a card to send with your claim.",
-    'nocard.armedFinal': "Pick a card to send with your claim. They must take it.",
-    'nocard.offer': "Offer with claim",
-    'nocard.received': "💬 Claims: I don't have it · #{offers}",
-    'nocard.claim': "💬 Claims: I don't have it",
-    'nocard.a11yToggle': "I don't have it claim",
+    'declaration.toggle': "I don't have it",
+    'declaration.pick': 'What are you offering instead?',
+    'declaration.a11yPick': 'Declare {rank} instead',
+    'declaration.standard': 'Here is {requested}.',
+    'declaration.substitute': "I don’t have {requested}. Take {substitute} instead.",
 
     // ---- Lie Deye strip
     'ld.title': 'Lie Deye',
@@ -170,13 +168,11 @@ export default {
     'action.lieDeyeOnYou': '{name} השתמש/ה ב-Lie Deye על הקלף שלך…',
     'action.mutedTrading': 'את/ה מושתק/ת - {a} ו{b} מחליפים קלפים.',
 
-    'nocard.button': "אין לי את הקלף",
-    'nocard.armed': "בחרו קלף לצירוף הטענה.",
-    'nocard.armedFinal': "בחרו קלף לצירוף הטענה. חובה לקחת אותו.",
-    'nocard.offer': "מסירה עם הטענה",
-    'nocard.received': "💬 טוען: אין לי את הקלף · הצעה {offers}",
-    'nocard.claim': "💬 טוען: אין לי את הקלף",
-    'nocard.a11yToggle': "טענת אין לי את הקלף",
+    'declaration.toggle': 'אין לי את הקלף',
+    'declaration.pick': 'מה להציע במקום?',
+    'declaration.a11yPick': 'להכריז על {rank} במקום',
+    'declaration.standard': 'הנה \u2066{requested}\u2069.',
+    'declaration.substitute': 'אין לי \u2066{requested}\u2069. קחו \u2068{substitute}\u2069 במקום.',
 
     'ld.title': 'Lie Deye',
     'ld.var': 'VAR',

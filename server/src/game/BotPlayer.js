@@ -1,7 +1,7 @@
 'use strict';
 
 const { C2S, PHASES } = require('../shared/events');
-const { isJoker, findWinningRank } = require('./deck');
+const { isJoker, findWinningRank, JOKER } = require('./deck');
 
 const PERSONALITIES = Object.freeze({
   strategist: { bluff: 0.06, feed: 12, read: 0.34, reject: 0.08, rejectSecond: 0.08, pace: 0 },
@@ -12,6 +12,8 @@ const PERSONALITIES = Object.freeze({
 function countRank(cards, rank) {
   return cards.filter((card) => card.rank === rank).length;
 }
+
+const substituteOf = (offer) => offer.declaration?.substituteRank ?? null;
 
 function weightedPick(choices, weight, random) {
   const weights = choices.map(weight);
@@ -53,10 +55,12 @@ class BotPlayer {
       return 0.08 * state.offers.length + (state.hand.some(isJoker) ? 0.06 : 0);
     }
     const pending = state.offers.at(-1);
-    const claim = pending.claimedNoCard ? (state.canUseLieDeye ? 0.19 : 0.10) : 0;
+    const substitute = substituteOf(pending);
+    const claim = substitute ? (state.canUseLieDeye ? 0.19 : 0.10) : 0;
+    const jokerClaim = substitute === JOKER ? 0.035 : 0;
     const secondOffer = state.offers.length === 2 ? 0.20 : 0;
     const review = state.timeFrozen ? 0.24 : 0;
-    return claim + secondOffer + review;
+    return claim + jokerClaim + secondOffer + review;
   }
 
   choose(state, history) {
@@ -96,10 +100,20 @@ class BotPlayer {
         : 5;
       return base / (5 ** (countRank(owned, candidate.rank) - 1));
     }, this.random);
-    // A false claim is more convincing when the offered card cannot disprove it on receipt.
+    const payload = { cardId: card.id };
+    if (state.offers.length + 1 === state.maxOffers) return { event: C2S.OFFER_CARD, payload };
+
+    // Prefer a plausible alternative. A Bluffer occasionally calls Joker with any card.
     const claimChance = matching === 0 ? 0.38 : this.traits.bluff * (card.rank === state.requestedRank ? 0.1 : 1);
-    const claimedNoCard = this.random() < claimChance;
-    return { event: C2S.OFFER_CARD, payload: { cardId: card.id, claimedNoCard } };
+    if (this.random() < claimChance) {
+      if (this.personality === 'bluffer' && this.random() < 0.22) payload.substituteRank = JOKER;
+      else if (card.rank !== state.requestedRank && (matching === 0 || this.random() >= 0.25)) payload.substituteRank = card.rank;
+      else {
+        const choices = [...state.ranks.filter((rank) => rank !== state.requestedRank), JOKER];
+        payload.substituteRank = choices[Math.floor(this.random() * choices.length)];
+      }
+    }
+    return { event: C2S.OFFER_CARD, payload };
   }
 
   _decide(state, history) {
@@ -110,9 +124,11 @@ class BotPlayer {
     const holdsJoker = state.hand.some(isJoker);
     const nearSet = countRank(state.hand, state.requestedRank) >= 3;
     const pastOffers = history.filter((e) => e.type === 'card_offered' && e.playerId === state.holderId && e.turn < state.turn).slice(-8);
-    const repeatedClaims = pastOffers.filter((e) => e.claimedNoCard).length >= 2;
-    const changedStory = state.offers.some((offer) => offer !== pending && offer.claimedNoCard !== pending.claimedNoCard);
-    const suspicious = (pending.claimedNoCard && (knownLies > 0 || repeatedClaims || (pastOffers.length > 0 && nearSet))) ||
+    const repeatedClaims = pastOffers.filter(substituteOf).length >= 2;
+    const substitute = substituteOf(pending);
+    const jokerClaim = substitute === JOKER;
+    const changedStory = state.offers.some((offer) => offer !== pending && substituteOf(offer) !== substitute);
+    const suspicious = jokerClaim || (substitute && (knownLies > 0 || repeatedClaims || (pastOffers.length > 0 && nearSet))) ||
       changedStory || (knownLies >= 2 && nearSet);
     if (state.canUseLieDeye && !holdsJoker && suspicious && !state.offers.some((offer) => offer.lieDeyeUsed) && this.random() < this.traits.read) {
       return { event: C2S.USE_LIE_DEYE };
@@ -120,13 +136,15 @@ class BotPlayer {
 
     if (state.offers.length === 2) {
       // A change in wording alone is enough to check, but needs corroboration to force a third offer.
-      const madeClaim = state.offers.some((offer) => offer.claimedNoCard);
+      const madeClaim = state.offers.some(substituteOf);
       const suspiciousClaim = madeClaim && (knownLies > 0 || (repeatedClaims && (changedStory || nearSet)));
       if (!holdsJoker && (suspiciousClaim || (knownLies >= 2 && nearSet)) && this.random() < this.traits.rejectSecond) {
         return { event: C2S.PLAYER_DECISION, payload: { accept: false } };
       }
       const offer = weightedPick(state.offers, (candidate) => {
-        if (candidate.claimedNoCard) return nearSet || knownLies ? 2 : 3;
+        const alternative = substituteOf(candidate);
+        if (alternative === JOKER) return holdsJoker || knownLies ? 2 : 1;
+        if (alternative) return (nearSet || knownLies ? 2 : 3) + Math.max(0, countRank(state.hand, alternative) - 1) * 2;
         return candidate === pending ? 5 : 4;
       }, this.random);
       return { event: C2S.PLAYER_DECISION, payload: { accept: true, offerIndex: offer.number - 1 } };

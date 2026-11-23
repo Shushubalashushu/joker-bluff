@@ -16,12 +16,10 @@ export function describeEvent(e, nameOf, myId, t = fallbackT) {
     case 'card_requested':
       return t('event.cardRequested', { who: who(e.playerId), target: who(e.targetId), rank: e.rank });
     case 'card_offered':
-      if (e.claimedNoCard) return t('event.cardOfferedClaim', { who: who(e.playerId), rank: e.rank, n: e.offerNumber });
       return e.forced ? t('event.cardOfferedForced') : t('event.cardOffered', { n: e.offerNumber });
     case 'offer_rejected':
       return e.nextIsForced ? t('event.offerRejectedNextForced') : t('event.offerRejected', { who: who(e.playerId), n: e.offerNumber });
     case 'card_transferred':
-      if (e.claimedNoCard) return t(e.forced ? 'event.transferForcedClaim' : 'event.transferClaim', { who: who(e.toId), giver: who(e.fromId), rank: e.claimedRank });
       return e.forced ? t('event.transferForced', { who: who(e.toId) }) : t('event.transfer', { who: who(e.toId), n: e.offerNumber });
     case 'timeout':
       return t('event.timeout', { who: who(e.playerId) });

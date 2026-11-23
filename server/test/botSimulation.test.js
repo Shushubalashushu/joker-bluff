@@ -29,8 +29,9 @@ function scriptedPlayer(state, random) {
       const cards = shuffle([...state.hand], random).sort((a, b) => count(a.rank) - count(b.rank));
       const card = cards.find((candidate) => findWinningRank(owned.filter((other) => other.id !== candidate.id))) ??
         cards.find(isJoker) ?? cards[0];
-      const claimedNoCard = random() < (owned.some((candidate) => candidate.rank === state.requestedRank) ? 0.2 : 0.4);
-      return { event: C2S.OFFER_CARD, payload: { cardId: card.id, claimedNoCard } };
+      const claim = random() < (owned.some((candidate) => candidate.rank === state.requestedRank) ? 0.2 : 0.4);
+      const substituteRank = claim && state.offers.length + 1 < state.maxOffers && card.rank !== state.requestedRank ? card.rank : undefined;
+      return { event: C2S.OFFER_CARD, payload: { cardId: card.id, substituteRank } };
     }
     case PHASES.DECISION: {
       const accept = state.offers.length === 2 || random() >= 0.15;
@@ -88,7 +89,7 @@ function simulate(seats, human, seed) {
     const events = play(game, id, action);
     for (const event of events) {
       if (event.type === 'card_offered' || event.type === 'card_requested') {
-        history.push({ type: event.type, playerId: event.playerId, rank: event.rank, claimedNoCard: event.claimedNoCard, turn });
+        history.push({ type: event.type, playerId: event.playerId, rank: event.rank, declaration: event.declaration, turn });
       }
       if (event.type === 'card_transferred' && game.lastTransfer.cardId === jokerId) {
         if (event.fromId === human) {

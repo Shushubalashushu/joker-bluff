@@ -50,6 +50,7 @@ async function checkRules(page, lang, { escape = false, live = false, whileOpen 
   assert.equal(await heading.evaluate((element) => getComputedStyle(element).textAlign), lang === 'he' ? 'right' : 'left');
   const ranks = dialog.locator('.notranslate[translate="no"]').filter({ hasText: /^J, Q, K, A$/ });
   assert.equal(await ranks.count(), 1);
+  await dialog.getByText(lang === 'he' ? /אפשר אפילו להגיד ״קחו את הג׳וקר״/ : /You can even say “take the Joker\.”/).waitFor();
   if (live) await dialog.getByText(lang === 'he' ? 'שעון המשחק ממשיך לרוץ.' : 'The match clock keeps running.').waitFor();
   const finalHeading = dialog.getByRole('heading', { name: sections.at(-1), exact: true });
   await finalHeading.scrollIntoViewIfNeeded();
@@ -103,13 +104,50 @@ function prepareSecondOffer(room) {
     else if (phase === 'OFFER') {
       const owned = [...hand, ...offers.map((offer) => offer.card)];
       const card = hand.find((candidate) => !findWinningRank(owned.filter((other) => other !== candidate)));
-      room.act(actorId, 'offer_card', { cardId: card.id, claimedNoCard: offers.length > 0 });
+      room.act(actorId, 'offer_card', { cardId: card.id, substituteRank: offers.length === 1 ? 'JOKER' : undefined });
     } else room.act(actorId, 'player_decision', { accept: !botAsker });
   }
   assert.fail('expected a bot to face a second offer');
 }
 
-test('desktop and mobile players can moderate bilingual lobbies, read rules, and keep playing', { timeout: 100000 }, async (t) => {
+function safeOffer(game) {
+  const hand = game.hands.get(game.holderId);
+  const owned = [...hand, ...game.offers.map(({ card }) => card)];
+  const receiverHand = game.hands.get(game.activeId);
+  return hand.find((card) => !findWinningRank(owned.filter((other) => other !== card)) &&
+    !findWinningRank([...receiverHand, card].filter((candidate) => candidate.rank !== 'JOKER')));
+}
+
+function advanceToHolder(room, holder) {
+  for (let i = 0; i < room.players.length && room.game.holderId !== holder; i++) {
+    const { activeId, holderId, ranks } = room.game;
+    room.act(activeId, 'request_card', { rank: ranks[0] });
+    room.act(holderId, 'offer_card', { cardId: safeOffer(room.game).id });
+    room.act(activeId, 'player_decision', { accept: true });
+  }
+  assert.equal(room.game.holderId, holder);
+}
+
+async function selectOfferCard(page, room, lang) {
+  const { holderId, hands } = room.game;
+  const card = safeOffer(room.game);
+  const order = hands.get(holderId).map(({ id }) => id);
+  const from = order.indexOf(card.id);
+  const center = Math.floor((order.length - 1) / 2);
+  [order[from], order[center]] = [order[center], order[from]];
+  room.shuffleHand(holderId, order);
+
+  const heSuits = { hearts: 'לב', diamonds: 'יהלום', clubs: 'תלתן', spades: 'עלה' };
+  const name = card.rank === 'JOKER' ? (lang === 'he' ? "ג'וקר" : 'Joker')
+    : lang === 'he' ? `\u2068${card.rank}\u2069 \u2068${heSuits[card.suit]}\u2069` : `${card.rank} of ${card.suit}`;
+  const target = button(page, name);
+  if (lang === 'he') await target.tap();
+  else await target.click();
+  await target.and(page.locator('[aria-pressed="true"]')).waitFor();
+  return card;
+}
+
+test('desktop and mobile players can moderate lobbies, declare substitutes, and keep playing in both languages', { timeout: 120000 }, async (t) => {
   const output = await mkdtemp(join(tmpdir(), 'jokerbluff-turn-speed-'));
   const server = createGameServer();
   let browser;
@@ -267,12 +305,71 @@ test('desktop and mobile players can moderate bilingual lobbies, read rules, and
     const rolls = state.phase === 'DECISION' && state.offers.length === 2 ? [0.01, 0.93] : [0.99, 0.50];
     return thinkDelay.call(this, state, budget, () => rolls.shift());
   });
+  // Keep a human-to-human exchange adjacent, with bots available for the following turns.
+  room.setupRandom = () => 0.999999;
+  room.botDelay = () => 14000;
   await button(host, 'התחלת משחק!').click();
   for (const page of [host, guest]) {
     const seconds = await shownSeconds(page);
     assert.ok(seconds >= 10 && seconds <= 15, `fast countdown: ${seconds}s`);
   }
   assert.equal(room.game.phaseDuration, 15000);
+
+  await button(host, 'התחלת משחק!').waitFor({ state: 'detached' });
+  await host.setViewportSize({ width: 1280, height: 800 });
+  await button(host, 'החלפת שפה (אנגלית / עברית)').click();
+  advanceToHolder(room, room.hostId);
+  const { activeId: guestId, ranks: [requested, alternative] } = room.game;
+  await button(guest, `לבקש \u2068${requested}\u2069`).tap();
+  const englishToggle = host.getByRole('switch', { name: "I don't have it" });
+  await englishToggle.click();
+  assert.equal(await button(host, `Declare ${requested} instead`).count(), 0);
+  const firstCard = await selectOfferCard(host, room, 'en');
+  assert.equal(await button(host, 'Offer face-down').isEnabled(), false);
+  await button(host, 'Declare Joker instead').click();
+  await button(host, 'Offer face-down').click();
+  await until(() => room.game.offers[0]?.card.id === firstCard.id);
+  await guest.getByText(/הצעה.*אין לי.*קחו.*ג'וקר\u2069 במקום/).waitFor();
+  const englishDeclaration = host.getByText(/Offer 1 · I don’t have .* Take Joker instead/);
+  await englishDeclaration.waitFor();
+  assert.equal(await englishDeclaration.locator('[translate="no"]').textContent(), requested);
+  await button(guest, 'דוחה').tap();
+  await englishToggle.and(host.locator('[aria-checked="false"]')).waitFor();
+  await selectOfferCard(host, room, 'en');
+  await button(host, 'Offer face-down').click();
+  await guest.getByText(/הצעה.*הנה/).waitFor();
+  assert.deepEqual(room.game.offers.map(({ declaration }) => declaration.substituteRank), ['JOKER', null]);
+  await button(guest, 'לדחות שני').tap();
+  await button(host, 'Select a card').waitFor();
+  assert.equal(await englishToggle.count(), 0);
+  await selectOfferCard(host, room, 'en');
+  await button(host, 'Force this card!').click();
+  await until(() => room.game.holderId === guestId);
+  assert.equal(room.game.lastTransfer.declaration, null);
+
+  room.act(room.game.activeId, 'request_card', { rank: requested });
+  await guest.getByRole('switch', { name: 'אין לי את הקלף' }).tap();
+  const mobileRank = button(guest, `להכריז על \u2068${alternative}\u2069 במקום`);
+  await mobileRank.waitFor();
+  const rankBox = await mobileRank.boundingBox();
+  assert.ok(rankBox && rankBox.x >= 0 && rankBox.x + rankBox.width <= 390);
+  assert.equal(await mobileRank.locator('[translate="no"]').textContent(), alternative);
+  await mobileRank.tap();
+  await selectOfferCard(guest, room, 'he');
+  await button(guest, 'הצע הפוך').tap();
+  await host.getByText(new RegExp(`Offer 1 · I don’t have ${requested}\\. Take ${alternative} instead`)).waitFor();
+  room.act(room.game.activeId, 'player_decision', { accept: true });
+
+  const botGiver = room.game.seats.at(-1);
+  advanceToHolder(room, botGiver);
+  room.botBrains.set(botGiver, new BotPlayer('bluffer', () => 0));
+  room.botDelay = () => 50;
+  await button(host, `Ask for ${requested}`).click();
+  await host.getByText(/Offer 1 · I don’t have .* Take Joker instead/).waitFor();
+  assert.ok(events.some((event) => event.playerId === botGiver && event.declaration?.substituteRank === 'JOKER'));
+  await button(host, 'Take it').click();
+  await until(() => room.game.phase === 'REQUEST');
+  delete room.botDelay;
 
   prepareSecondOffer(room);
   const { actorId, phaseStartedAt, deadline } = room.game;
@@ -287,6 +384,7 @@ test('desktop and mobile players can moderate bilingual lobbies, read rules, and
 
   const gameBeforeLeave = room.game;
   const previousHost = room.hostId;
+  await button(host, 'Switch language (English / Hebrew)').click();
   host.once('dialog', (dialog) => dialog.accept());
   await button(host, 'יציאה מהמשחק').click();
   await button(host, 'משחק פרטי').waitFor();

@@ -93,7 +93,7 @@ npm run test:e2e
 | Deck | `N` players → first `N` ranks of `A K Q J 10 9 8 7`, × 4 suits, + 1 Joker = `4N + 1` cards (4–8 players) |
 | Deal | The server shuffles the seating order at each game start, including rematches. One random player gets **5** cards (the *holder*), the others get 4. The deal is redone if anyone starts with a winning hand. |
 | Turn | The seat right after the holder is the *active* player. They `request_card` (name a rank). |
-| Offers | The holder `offer_card`s **any** card face-down. After the first rejection, the requester may take either of the first two face-down offers or reject the second to force a third. |
+| Offers | The holder `offer_card`s **any** card face-down. On the first two offers they claim it is the requested rank by default, or can claim they lack it and offer a different rank or Joker. After the first rejection, the requester may take either offer or reject the second to force a third, which has no declaration. |
 | 3rd offer | After 2 rejections the holder has exactly 3 cards in hand. They choose one, and it is **auto-accepted** (there is no decision phase). |
 | After a transfer | Every unchosen card returns to the giver. The receiver now has 5 cards and becomes the new holder. The seat after them becomes the new active player. |
 | Win / loss | After a successful transfer, the giver wins automatically if passing their fifth card leaves exactly four cards of one rank. Rejected cards return before the win check. Whoever owns the Joker after the transfer loses. |
@@ -122,7 +122,7 @@ Bots use the same turn rules, token balances and win conditions as humans. They 
 ### Hand tools
 - **Anti-spy (👁️ Hide):** flips every card in *your* hand face-down so people nearby can't peek. Only an inner card layer rotates (Y-axis flip), so the cards keep exactly the same positions and order. Your own offered cards on the table are hidden too.
 - **Shuffle:** works at any time during a match, even when it isn't your turn and even after the timer runs out. The app picks a new order, **shows it right away** with a little hop animation, and sends it to the server. The server checks that it's an exact permutation of your hand and stores it (if it isn't, the server shuffles randomly instead), so Lie Deye slot positions always match what the giver actually saw.
-- **I don't have it:** the giver may attach this player claim to any face-down offer. The claim can be honest or a bluff. The requester sees a speech badge, including when the third offer transfers immediately.
+- **Substitute declarations:** Toggle **I don't have it** on offer one or two and pick another rank from the match deck or Joker. The whole table sees each player's declaration. A substitute is truthful only if the giver owns none of the requested rank (including any rejected card) and the offered card matches the substitute. A standard declaration is truthful when the offered card matches the request. Timeout offers carry no declaration.
 
 ## Socket protocol
 
@@ -141,7 +141,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `set_turn_speed` | `{ lifecycleId, speed: 'fast' \| 'standard' }` (host only, in the waiting room) |
 | `start_game`, `play_again`, `end_game` | `{ lifecycleId }` (host only) |
 | `request_card` | `{ matchId, step, rank }` |
-| `offer_card` | `{ matchId, step, cardId, claimedNoCard?: boolean, pressDurationMs?: number, touches?: [{ c, u, v, x, y, t }] }`. The hold duration applies to the chosen card. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), and `t` the ms since OFFER started. |
+| `offer_card` | `{ matchId, step, cardId, substituteRank?: string, pressDurationMs?: number, touches?: [{ c, u, v, x, y, t }] }`. `substituteRank` can be a different rank in the current deck or `JOKER` on the first two offers. The hold duration applies to the chosen card. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), and `t` the ms since OFFER started. |
 | `player_decision` | `{ matchId, step, accept: boolean, offerIndex?: number }`. Use `offerIndex: 0` or `1` to take the first or second available offer. Omitting it accepts the latest offer. Rejecting the latest offer uses `accept: false` without an index. |
 | `use_lie_deye` | `{ matchId, step }` |
 | `shuffle_hand` | `{ matchId, order?: cardId[] }` → `{ order }`. The sender's new `game_state` is emitted before the ack. |
@@ -154,7 +154,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `room_state` | Lobby state or `null`. It includes `turnSpeed` and each player's Lie Deye balance. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. Only the waiting-room host receives `bannedPlayers`. |
 | `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
-| `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. `seat_taken_over` identifies a departing player whose seat is now a bot. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
+| `game_event` | Public events for toasts and animations. A `card_offered` event includes the public `declaration` (`{ requestedRank, substituteRank }` or `null`). The selected declaration follows the `card_transferred` event and `lastTransfer`. `seat_taken_over` identifies a departing player whose seat is now a bot. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
 
 ## Server authority and safety checks
 

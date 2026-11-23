@@ -61,21 +61,21 @@ test('Detective waits for a reason to spend, remembers only a paid reading and c
   const holderId = 'giver';
   const hand = cards.filter((card) => card.rank === 'A').slice(0, 3);
   hand.push(cards.find((card) => card.rank === 'Q'));
-  const pending = { number: 1, claimedNoCard: true, card: null };
+  const pending = { number: 1, declaration: { requestedRank: 'A', substituteRank: 'Q' }, card: null };
   const decision = { phase: PHASES.DECISION, holderId, requestedRank: 'A', hand, turn: 1,
     canUseLieDeye: true, lieDeye: null, offers: [pending] };
   assert.deepEqual(bot.choose(decision, []), { event: C2S.PLAYER_DECISION, payload: { accept: true } });
   assert.equal(bot.knownLieCounts.size, 0);
   const later = { ...decision, turn: 6 };
   assert.equal(bot.choose(later, []).event, C2S.PLAYER_DECISION);
-  const history = [{ type: 'card_offered', playerId: holderId, turn: 3, claimedNoCard: false }];
+  const history = [{ type: 'card_offered', playerId: holderId, turn: 3, declaration: { requestedRank: 'A', substituteRank: null } }];
   assert.equal(bot.choose(later, history).event, C2S.USE_LIE_DEYE);
   assert.equal(bot.knownLieCounts.size, 0);
   const reading = { ...later, canUseLieDeye: false, offers: [{ ...pending, lieDeyeUsed: true }],
     lieDeye: { giverId: holderId, lieCount: 2 } };
   assert.equal(bot.choose(reading, []).event, C2S.PLAYER_DECISION);
   assert.equal(bot.knownLieCounts.get(holderId), 2);
-  const secondOffer = { ...later, offers: [...reading.offers, { number: 2, claimedNoCard: false, card: null }] };
+  const secondOffer = { ...later, offers: [...reading.offers, { number: 2, declaration: { requestedRank: 'A', substituteRank: null }, card: null }] };
   assert.deepEqual(bot.choose(secondOffer, []), { event: C2S.PLAYER_DECISION, payload: { accept: true, offerIndex: 1 } });
 });
 
@@ -84,9 +84,9 @@ test('bots force a third offer only occasionally and only with corroborating evi
   const hand = [...cards.filter((card) => card.rank === 'A').slice(0, 3), cards.find((card) => card.rank === 'K')];
   const state = {
     phase: PHASES.DECISION, holderId: 'giver', turn: 7, requestedRank: 'A', hand,
-    offers: [{ number: 1, claimedNoCard: true }, { number: 2, claimedNoCard: false }],
+    offers: [{ number: 1, declaration: { requestedRank: 'A', substituteRank: 'Q' } }, { number: 2, declaration: { requestedRank: 'A', substituteRank: null } }],
   };
-  const history = [2, 4].map((turn) => ({ type: 'card_offered', playerId: 'giver', turn, claimedNoCard: true }));
+  const history = [2, 4].map((turn) => ({ type: 'card_offered', playerId: 'giver', turn, declaration: { requestedRank: 'A', substituteRank: 'Q' } }));
   for (const personality of ['strategist', 'detective', 'bluffer']) {
     const eager = new BotPlayer(personality, () => 0);
     assert.deepEqual(eager.choose(state, []), { event: C2S.PLAYER_DECISION, payload: { accept: true, offerIndex: 0 } });
@@ -114,17 +114,17 @@ test('Bluffer can make an unexpected request but pursues a nearly complete set',
   const splitHand = [...hand.slice(0, 2), hand[3], cards.find((card) => card.rank === 'Q')];
   assert.equal(feinting.choose({ ...request, hand: splitHand }, []).payload.rank, 'K');
   const decision = { phase: PHASES.DECISION, holderId: 'giver', turn: 2, requestedRank: 'A', hand,
-    offers: [{ number: 1, claimedNoCard: true, card: null }] };
+    offers: [{ number: 1, declaration: { requestedRank: 'A', substituteRank: 'Q' }, card: null }] };
   assert.equal(strategist.choose(decision, []).payload.accept, true);
 });
 
 test('Bluffer claim rates follow the cards and stay the same across early and late turns', () => {
-  const { cards } = buildDeck(4);
+  const { ranks, cards } = buildDeck(4);
   const hand = [...cards.filter((card) => card.rank === 'K'), cards.find((card) => card.rank === 'Q')];
-  const offer = { phase: PHASES.OFFER, requestedRank: 'K', activeId: 'requester', hand, offers: [] };
+  const offer = { phase: PHASES.OFFER, requestedRank: 'K', activeId: 'requester', hand, ranks, offers: [], maxOffers: 3 };
   const countClaims = (state) => {
     const bot = new BotPlayer('bluffer', randomFrom(719));
-    return Array.from({ length: 2000 }, () => bot.choose(state, []).payload.claimedNoCard).filter(Boolean).length;
+    return Array.from({ length: 2000 }, () => bot.choose(state, []).payload.substituteRank).filter(Boolean).length;
   };
   const early = countClaims({ ...offer, turn: 1 });
   assert.equal(early, countClaims({ ...offer, turn: 20 }));
@@ -133,11 +133,31 @@ test('Bluffer claim rates follow the cards and stay the same across early and la
   assert.ok(honest > 650 && honest < 880, `honest claims: ${honest}/2000`);
 });
 
+test('bots make honest substitutes, bluff Joker, and weigh a declared rank against their own hand', () => {
+  const { ranks, cards } = buildDeck(4);
+  const hand = cards.filter((card) => card.rank === 'Q');
+  const offer = { phase: PHASES.OFFER, requestedRank: 'A', hand, ranks, offers: [], maxOffers: 3 };
+  const straightforward = new BotPlayer('strategist', () => 0);
+  assert.equal(straightforward.choose(offer, []).payload.substituteRank, 'Q');
+  const bluffer = new BotPlayer('bluffer', () => 0);
+  assert.equal(bluffer.choose(offer, []).payload.substituteRank, 'JOKER');
+  assert.equal(bluffer.choose({ ...offer, offers: [{}, {}] }, []).payload.substituteRank, undefined);
+
+  const detective = new BotPlayer('detective', () => 0.4);
+  const first = { number: 1, declaration: { requestedRank: 'A', substituteRank: 'JOKER' }, card: null };
+  const decision = { phase: PHASES.DECISION, holderId: 'giver', requestedRank: 'A', hand, offers: [first], canUseLieDeye: true };
+  assert.equal(detective.choose(decision, []).event, C2S.USE_LIE_DEYE);
+  const second = { number: 2, declaration: { requestedRank: 'A', substituteRank: null }, card: null };
+  const pick = (candidate) => detective.choose({ ...decision, canUseLieDeye: false, offers: [candidate, second] }, []).payload.offerIndex;
+  assert.equal(pick(first), 1);
+  assert.equal(pick({ ...first, declaration: { ...first.declaration, substituteRank: 'Q' } }), 0);
+});
+
 test('a freshly received Joker is offered less often even though a winning pass takes priority', () => {
-  const { cards } = buildDeck(4);
+  const { ranks, cards } = buildDeck(4);
   const joker = cards.find(isJoker);
   const hand = ['A', 'K', 'Q', 'J'].map((rank) => cards.find((card) => card.rank === rank));
-  const state = { phase: PHASES.OFFER, turn: 4, requestedRank: 'A', hand: [...hand, joker], offers: [] };
+  const state = { phase: PHASES.OFFER, turn: 4, requestedRank: 'A', hand: [...hand, joker], ranks, offers: [] };
   const countJokers = (offer) => {
     const bot = new BotPlayer('strategist', randomFrom(921));
     return Array.from({ length: 2000 }, () => bot.choose(offer, []).payload.cardId).filter((id) => id === joker.id).length;
@@ -152,9 +172,9 @@ test('a freshly received Joker is offered less often even though a winning pass 
 
 test('routine and tense reactions have different pacing but share quick and slow replies', (t) => {
   const bot = new BotPlayer('detective');
-  const first = { claimedNoCard: false };
+  const first = { declaration: { requestedRank: 'A', substituteRank: null } };
   const routine = { phase: PHASES.DECISION, offers: [first] };
-  const tense = { ...routine, offers: [first, { claimedNoCard: true }], canUseLieDeye: true };
+  const tense = { ...routine, offers: [first, { declaration: { requestedRank: 'A', substituteRank: 'Q' } }], canUseLieDeye: true };
   const sample = (state, budget = 14350) => {
     const random = randomFrom(731);
     return Array.from({ length: 6000 }, () => bot.thinkDelay(state, budget, random));
@@ -195,7 +215,7 @@ test('pacing samples independently of the action and weakly weights private Joke
   const bluffState = { ...regular, requestedRank: 'K' };
   assert.ok(bluff.thinkDelay(bluffState, 14350, () => rolls.shift()) < 1500);
   const move = bluff.choose(bluffState, []);
-  assert.equal(move.payload.claimedNoCard, true);
+  assert.equal(move.payload.substituteRank, 'JOKER');
   assert.notEqual(move.payload.cardId, regular.hand.find((card) => card.rank === 'K').id);
 });
 
@@ -227,7 +247,7 @@ test('a bot can force a third card after a private paid Lie Deye reading', () =>
   const rank = game.getStateFor(holderId).hand.find((card) => !isJoker(card)).rank;
   game.requestCard(activeId, rank);
   const [first, second, third] = game.getStateFor(holderId).hand;
-  game.offerCard(holderId, first.id, { claimedNoCard: true });
+  game.offerCard(holderId, first.id, { substituteRank: 'JOKER' });
   game.decide(activeId, false);
   game.offerCard(holderId, second.id);
   const before = game.getStateFor(activeId);
@@ -301,8 +321,8 @@ for (const humanCount of [1, 2, 3]) {
             historyMatches: history.every((item, index) => {
               const published = publishedHistory.at(index - history.length);
               return published?.type === item.type && published.playerId === item.playerId &&
-                published.rank === item.rank && published.claimedNoCard === item.claimedNoCard &&
-                Object.keys(item).every((key) => ['type', 'playerId', 'rank', 'claimedNoCard', 'turn'].includes(key));
+                published.rank === item.rank && published.declaration === item.declaration &&
+                Object.keys(item).every((key) => ['type', 'playerId', 'rank', 'declaration', 'turn'].includes(key));
             }),
           });
           const action = choose(state, history);

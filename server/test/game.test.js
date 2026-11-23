@@ -308,7 +308,7 @@ test('four of a kind + Joker is never a winning hand', () => {
   assert.equal(findWinningRank(four), 'K');
 });
 
-test('player claim: the giver may claim they lack a rank whether or not they hold it', () => {
+test('substitute and standard declarations are independent, public and face-down', () => {
   for (const holdsRank of [true, false]) {
     const g = newGame(4, 14);
     const { pid: holder, R: ownedRank } = rigHolderQuads(g);
@@ -316,42 +316,87 @@ test('player claim: the giver may claim they lack a rank whether or not they hol
     const hand = g.hands.get(holder);
     const rank = holdsRank ? ownedRank : g.ranks.find((candidate) => !hand.some((card) => card.rank === candidate));
     g.requestCard(asker, rank);
-    const [offered] = g.offerCard(holder, hand[0].id, { claimedNoCard: true });
-    assert.equal(offered.claimedNoCard, true);
-    assert.equal(offered.rank, rank);
+    const declaration = { requestedRank: rank, substituteRank: 'JOKER' };
+    const firstCard = hand[0];
+    const [offered] = g.offerCard(holder, firstCard.id, { substituteRank: 'JOKER' });
+    assert.deepEqual(offered.declaration, declaration);
+    assert.equal(Object.hasOwn(offered, 'cardId'), false);
+    assert.equal(Object.hasOwn(offered, 'truthful'), false);
     const [visibleOffer] = g.getStateFor(asker).offers;
-    assert.equal(visibleOffer.claimedNoCard, true);
+    assert.deepEqual(visibleOffer.declaration, declaration);
     assert.equal(visibleOffer.card, null);
     g.decide(asker, false);
 
     g.offerCard(holder, hand[0].id);
-    assert.equal(g.getStateFor(asker).offers[1].claimedNoCard, false, 'claims are opt-in for each offer');
+    assert.deepEqual(g.getStateFor(asker).offers.map((offer) => offer.declaration), [declaration, { requestedRank: rank, substituteRank: null }]);
+    const [transfer] = g.decide(asker, true, 0);
+    assert.deepEqual(transfer.declaration, declaration);
+    assert.deepEqual(g.getStateFor(asker).lastTransfer.declaration, declaration);
+    assert.equal(g.getStateFor(asker).lastTransfer.cardId, firstCard.id);
   }
 });
 
-test('player claim: the accepted third offer keeps its declaration and only the receiver gets its identity', () => {
+test('invalid, out-of-phase and third-offer substitutes leave the game unchanged', () => {
   const g = newGame(4, 32);
   const { pid: holder, R: quadRank } = rigHolderQuads(g);
   const asker = g.activeId;
   const observer = g.seats.find((id) => id !== holder && id !== asker);
   const hand = g.hands.get(holder);
   const missingRank = g.ranks.find((rank) => !hand.some((card) => card.rank === rank));
+  assert.throws(() => g.offerCard(holder, hand[0].id, { substituteRank: 'JOKER' }), { code: 'WRONG_PHASE' });
   g.requestCard(asker, missingRank);
+  const before = g.getStateFor(holder);
+  for (const substituteRank of [missingRank, '7', 'joker', '', null, { rank: 'Q' }, 9]) {
+    assert.throws(() => g.offerCard(holder, hand[0].id, { substituteRank }), { code: 'BAD_DECLARATION' });
+    assert.deepEqual(g.getStateFor(holder), before);
+  }
   for (let i = 0; i < 2; i++) {
     g.offerCard(holder, hand.find((card) => card.rank === quadRank).id);
+    assert.throws(() => g.offerCard(holder, hand[0].id, { substituteRank: 'JOKER' }), { code: 'WRONG_PHASE' });
     g.decide(asker, false);
   }
 
   const card = hand.find((c) => c.rank === quadRank);
-  const [, transfer] = g.offerCard(holder, card.id, { claimedNoCard: true });
+  assert.throws(() => g.offerCard(holder, card.id, { substituteRank: 'JOKER' }), { code: 'BAD_DECLARATION' });
+  const [offered, transfer] = g.offerCard(holder, card.id);
   assert.equal(transfer.forced, true);
-  assert.equal(transfer.claimedNoCard, true);
-  assert.equal(transfer.claimedRank, missingRank);
+  assert.equal(offered.declaration, null);
+  assert.equal(transfer.declaration, null);
   assert.equal(Object.hasOwn(transfer, 'cardId'), false);
   assert.equal(g.getStateFor(asker).lastTransfer.cardId, card.id);
   assert.equal(g.getStateFor(observer).lastTransfer.cardId, null);
-  assert.equal(g.getStateFor(observer).lastTransfer.claimedRank, missingRank);
+  assert.equal(g.getStateFor(observer).lastTransfer.declaration, null);
+  assert.equal(g.liesByPlayer.get(holder), 2, 'only the first two standard bluffs count');
   assert.equal(g.result, null);
+});
+
+test('Lie Deye counts a substitute as honest only when both parts match, including Joker', () => {
+  const cases = [
+    ['matching substitute, no requested rank', 'A', 'Q', 'Q', 0],
+    ['matching substitute while hiding a requested rank', 'K', 'Q', 'Q', 1],
+    ['wrong substitute without the requested rank', 'A', 'J', 'Q', 1],
+    ['both assertions are false, still one lie', 'K', 'J', 'Q', 1],
+    ['honest Joker declaration', 'A', 'JOKER', 'JOKER', 0],
+    ['Joker claim while hiding the requested rank', 'K', 'JOKER', 'JOKER', 1],
+    ['bluffed Joker declaration', 'A', 'Q', 'JOKER', 1],
+    ['honest standard declaration', 'K', 'K', undefined, 0],
+    ['bluffed standard declaration', 'K', 'Q', undefined, 1],
+  ];
+  for (const [label, requested, actual, substituteRank, lies] of cases) {
+    const g = newGame(4);
+    const { holderId, activeId } = g;
+    const { cards } = buildDeck(4);
+    const hand = ['K', 'K', 'Q', 'J', 'JOKER'].map((rank) => cards.splice(cards.findIndex((card) => card.rank === rank), 1)[0]);
+    g.hands.set(holderId, hand);
+    for (const other of g.seats.filter((id) => id !== holderId)) g.hands.set(other, cards.splice(0, 4));
+    g.requestCard(activeId, requested);
+    g.offerCard(holderId, hand.find((card) => card.rank === actual).id, { substituteRank });
+    g.useLieDeye(activeId);
+    assert.equal(g.getStateFor(activeId).lieDeye.lieCount, 0, label);
+    assert.equal(g.getStateFor(activeId).offers[0].card, null, label);
+    g.decide(activeId, true);
+    assert.equal(g.liesByPlayer.get(holderId), lies, label);
+  }
 });
 
 test('timeouts: server auto-plays and the 3rd offer is still forced', () => {

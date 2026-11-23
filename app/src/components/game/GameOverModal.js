@@ -5,6 +5,7 @@ import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import Avatar from '../common/Avatar';
 import CartoonButton from '../common/CartoonButton';
 import PlayingCard from './PlayingCard';
+import OfferDeclaration from './OfferDeclaration';
 import { LIE_DEYE } from '../../config';
 import { useI18n } from '../../i18n';
 import { playerName } from '../../utils/playerName';
@@ -45,9 +46,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
           <Animated.View entering={BounceIn.duration(700)} style={styles.card}>
             <Text style={styles.confetti}>🎉 ✨ 🎊</Text>
             <Text style={[styles.headline, textStyle]}>{t(iWon ? 'results.win' : iLost ? 'results.loss' : 'results.over')}</Text>
-            {lastTransfer?.claimedNoCard && (
-              <Text style={[styles.claim, textStyle]}>{t('nocard.claim')}</Text>
-            )}
+            <OfferDeclaration declaration={lastTransfer?.declaration} style={styles.claim} />
 
             <View style={styles.podium}>
               <View style={styles.podiumCol}>

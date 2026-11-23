@@ -78,7 +78,8 @@ class JokerBluffGame {
      * Face-down cards on the table, plus the giver telemetry captured when each was offered.
      * @type {{card: object, status: 'pending'|'rejected'|'accepted', decisionMs: number, phaseLimitMs: number,
      *         handSize: number, offeredSlot: number, touches: object[], shuffles: number, auto: boolean,
-     *         pressDurationMs: number|null, claimedNoCard: boolean, lieDeyeUsed: boolean}[]}
+     *         pressDurationMs: number|null, declaration: {requestedRank: string, substituteRank: string|null}|null,
+     *         lieDeyeUsed: boolean}[]}
      */
     this.offers = [];
     this.offerPhaseShuffles = 0; // how often the holder shuffled while choosing the current offer
@@ -144,7 +145,7 @@ class JokerBluffGame {
    * `opts.touches` is the giver's touch trail while choosing (see telemetry.js).
    * Decision time is measured by the SERVER (phase start -> offer received).
    *
-   * `opts.claimedNoCard` is an optional statement by the giver about the requested rank.
+   * `opts.substituteRank` replaces the standard claim with a different rank or Joker.
    */
   offerCard(playerId, cardId, opts = {}) {
     this._assertPhase(PHASES.OFFER);
@@ -152,10 +153,19 @@ class JokerBluffGame {
     const hand = this.hands.get(playerId);
     const idx = hand.findIndex((c) => c.id === cardId);
     if (idx === -1) throw new GameError('BAD_CARD', 'That card is not in your hand');
-    const claimedNoCard = !opts.auto && opts.claimedNoCard === true;
-    // Rejected offers still belong to the giver until the final transfer.
-    if (claimedNoCard && this._ownedCards(playerId).some((card) => card.rank === this.requestedRank)) {
-      this.exchangeLies += 1;
+    const offerNumber = this.offers.length + 1;
+    const forced = offerNumber === MAX_OFFERS;
+    const { substituteRank } = opts;
+    if (substituteRank !== undefined && (forced || opts.auto || substituteRank === this.requestedRank ||
+        (substituteRank !== JOKER && !this.ranks.includes(substituteRank)))) {
+      throw new GameError('BAD_DECLARATION', 'Choose a different rank in this deck or Joker on the first or second offer');
+    }
+    const declaration = forced || opts.auto ? null : Object.freeze({ requestedRank: this.requestedRank, substituteRank: substituteRank ?? null });
+    if (declaration) {
+      const cardMatches = hand[idx].rank === (substituteRank ?? this.requestedRank);
+      // Rejected offers still belong to the giver until the final transfer.
+      const hidesRequestedRank = substituteRank !== undefined && this._ownedCards(playerId).some((card) => card.rank === this.requestedRank);
+      if (!cardMatches || hidesRequestedRank) this.exchangeLies += 1;
     }
 
     const handSize = hand.length;
@@ -174,10 +184,8 @@ class JokerBluffGame {
       shuffles: this.offerPhaseShuffles,
       auto: !!opts.auto,
       lieDeyeUsed: false,
-      claimedNoCard,
+      declaration,
     });
-    const offerNumber = this.offers.length;
-    const forced = offerNumber === MAX_OFFERS;
 
     const events = [
       {
@@ -186,8 +194,7 @@ class JokerBluffGame {
         targetId: this.activeId,
         offerNumber,
         forced,
-        claimedNoCard,
-        rank: claimedNoCard ? this.requestedRank : undefined,
+        declaration,
       },
     ];
     if (forced) {
@@ -389,7 +396,7 @@ class JokerBluffGame {
         status: o.status,
         forced: i + 1 === MAX_OFFERS,
         lieDeyeUsed: o.lieDeyeUsed,
-        claimedNoCard: o.claimedNoCard,
+        declaration: o.declaration,
         card: isHolder || finished ? { ...o.card } : null,
       })),
       maxOffers: MAX_OFFERS,
@@ -453,7 +460,6 @@ class JokerBluffGame {
     const toId = this.activeId;
     const offerNumber = offerIndex + 1;
     const accepted = this.offers[offerIndex];
-    const claimedRank = accepted.claimedNoCard ? this.requestedRank : null;
     const giverHand = this.hands.get(fromId);
     const passedFifthCard = giverHand.length + this.offers.length === 5;
 
@@ -471,8 +477,7 @@ class JokerBluffGame {
       forced,
       cardId: accepted.card.id,
       turn: this.turn,
-      claimedNoCard: accepted.claimedNoCard,
-      claimedRank,
+      declaration: accepted.declaration,
     };
     this.offers = [];
     this.requestedRank = null;
@@ -489,8 +494,7 @@ class JokerBluffGame {
         toId,
         offerNumber,
         forced,
-        claimedNoCard: accepted.claimedNoCard,
-        claimedRank,
+        declaration: accepted.declaration,
         nextHolderId: this.holderId,
         nextActiveId: this.activeId,
       },

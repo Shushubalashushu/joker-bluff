@@ -178,13 +178,13 @@ test('lie deye: both reviews use the same historical count until the exchange co
   const onlyMatchingCard = hand[oddIndex];
 
   g.requestCard(asker, onlyMatchingCard.rank);
-  g.offerCard(holder, onlyMatchingCard.id, { claimedNoCard: true });
+  g.offerCard(holder, onlyMatchingCard.id, { substituteRank: 'JOKER' });
   g.useLieDeye(asker);
   assert.equal(g.getStateFor(asker).lieDeye.lieCount, 0, 'the first false claim is still under review');
   g.decide(asker, false);
 
   assert.ok(hand.every((card) => card.rank !== onlyMatchingCard.rank));
-  g.offerCard(holder, hand[0].id, { claimedNoCard: true });
+  g.offerCard(holder, hand[0].id, { substituteRank: hand[0].rank });
   g.useLieDeye(asker);
   assert.equal(g.getStateFor(asker).lieDeye.lieCount, 0, 'both offers share the same historical count');
   assert.equal(g.liesByPlayer.get(holder), 0, 'no new claims are published before transfer');
@@ -195,7 +195,9 @@ test('lie deye: both reviews use the same historical count until the exchange co
   assert.equal(g.holderId, holder);
   const missingRank = g.ranks.find((rank) => !g.hands.get(holder).some((card) => card.rank === rank));
   g.requestCard(asker, missingRank);
-  g.offerCard(holder, nonWinningOffer(g), { claimedNoCard: true });
+  const safeId = nonWinningOffer(g);
+  const honest = hand.find((card) => card.id === safeId);
+  g.offerCard(holder, honest.id, { substituteRank: honest.rank });
   g.useLieDeye(asker);
   assert.equal(g.getStateFor(asker).lieDeye.lieCount, 2, 'the second claim was also false because the giver still owned the rejected card');
   g.decide(asker, false);
@@ -204,9 +206,10 @@ test('lie deye: both reviews use the same historical count until the exchange co
   assert.equal(g.getStateFor(asker).lieDeye.lieCount, 2, 'the prior honest claim did not increase the history');
   g.decide(asker, true);
 
+  const otherGiverHistory = g.liesByPlayer.get(g.holderId);
   toDecision(g, []);
   g.useLieDeye(g.activeId);
-  assert.equal(g.getStateFor(g.activeId).lieDeye.lieCount, 0, 'another giver has a separate count');
+  assert.equal(g.getStateFor(g.activeId).lieDeye.lieCount, otherGiverHistory, 'another giver has a separate count');
 });
 
 test('lie deye: keeps the picked slot and touches distinct and hides faces even with a Joker in play', () => {

@@ -4,6 +4,7 @@ import Animated, { SlideInDown } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import OfferDecisionButtons from './OfferDecisionButtons';
+import OfferDeclaration from './OfferDeclaration';
 import TimerBar from './TimerBar';
 import TouchHeatmap, { ScreenMap, analyzeTouches, heatColor } from './TouchHeatmap';
 import LanguageToggle from '../LanguageToggle';
@@ -166,9 +167,7 @@ export default function LieDeyeOverlay({ visible, data, giverName, game, clockOf
         </ScrollView>
 
         <View style={styles.footer}>
-          {game.offers[data.offerNumber - 1]?.claimedNoCard && (
-            <Text style={[styles.warn, textStyle]}>{t('nocard.claim')}</Text>
-          )}
+          <OfferDeclaration declaration={game.offers[data.offerNumber - 1]?.declaration} style={styles.declaration} />
           {forcedNext && <Text style={[styles.warn, textStyle]}>{t('action.rejectWarn')}</Text>}
           <OfferDecisionButtons offerCount={data.offerNumber} onDecide={onDecide} busy={busy} />
         </View>
@@ -249,4 +248,5 @@ const styles = StyleSheet.create({
   verdictText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.night, textAlign: 'center' },
   footer: { paddingHorizontal: 14, paddingBottom: 8, gap: 6 },
   warn: { fontFamily: fonts.bold, fontSize: 13, color: colors.pink, textAlign: 'center' },
+  declaration: { fontFamily: fonts.semibold, fontSize: 13, color: colors.cream, textAlign: 'center' },
 });

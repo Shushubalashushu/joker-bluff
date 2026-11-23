@@ -5,31 +5,38 @@ import CartoonButton from '../common/CartoonButton';
 import { PHASES } from '../../constants/events';
 import { useI18n } from '../../i18n';
 import OfferDecisionButtons from './OfferDecisionButtons';
+import OfferDeclaration from './OfferDeclaration';
 import { rich } from '../../i18n/rich';
 import { colors, fonts, gradients } from '../../theme';
 import { noTranslateProps } from '../../utils/webTranslation';
 
-function RankPicker({ ranks, onPick, disabled, compact }) {
+function RankPicker({ ranks, onPick, disabled, compact, substitute = false, selectedRank }) {
   const { t } = useI18n();
   return (
     <View style={styles.rankRow}>
-      {ranks.map((r) => (
-        <Pressable
-          key={r}
-          disabled={disabled}
-          onPress={() => onPick(r)}
-          style={({ pressed }) => [
-            styles.rankChip,
-            compact && styles.rankChipCompact,
-            pressed && styles.rankChipPressed,
-            disabled && { opacity: 0.5 },
-          ]}
-          accessibilityRole="button"
-          accessibilityLabel={t('action.a11yAskRank', { rank: r })}
-        >
-          <Text {...noTranslateProps} style={[styles.rankText, compact && { fontSize: 18 }]}>{r}</Text>
-        </Pressable>
-      ))}
+      {ranks.map((r) => {
+        const joker = r === 'JOKER';
+        const label = joker ? t('hand.joker') : r;
+        return (
+          <Pressable
+            key={r}
+            disabled={disabled}
+            onPress={() => onPick(r)}
+            style={({ pressed }) => [
+              styles.rankChip,
+              compact && styles.rankChipCompact,
+              selectedRank === r && styles.rankChipSelected,
+              pressed && styles.rankChipPressed,
+              disabled && { opacity: 0.5 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={t(substitute ? 'declaration.a11yPick' : 'action.a11yAskRank', { rank: label })}
+            aria-pressed={substitute ? selectedRank === r : undefined}
+          >
+            <Text {...(joker ? {} : noTranslateProps)} style={[styles.rankText, compact && { fontSize: 18 }]}>{label}</Text>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -84,7 +91,7 @@ function LieDeyeBar({ game, busy, onUse, onOpen }) {
   );
 }
 
-function NoCardToggle({ armed, onToggle, disabled }) {
+function SubstituteToggle({ armed, onToggle, disabled }) {
   const { t, textStyle } = useI18n();
   return (
     <Pressable
@@ -93,13 +100,13 @@ function NoCardToggle({ armed, onToggle, disabled }) {
       accessibilityRole="switch"
       aria-checked={armed}
       aria-disabled={disabled}
-      accessibilityLabel={t('nocard.a11yToggle')}
+      accessibilityLabel={t('declaration.toggle')}
       style={({ pressed }) => [styles.noCard, armed && styles.noCardOn, pressed && styles.noCardPressed, disabled && { opacity: 0.5 }]}
     >
       <Text>💬</Text>
       <View style={styles.noCardTextCol}>
         <Text style={[styles.noCardTitle, armed && { color: colors.white }, textStyle]}>
-          {t('nocard.button')}
+          {t('declaration.toggle')}
         </Text>
       </View>
     </Pressable>
@@ -110,7 +117,7 @@ function NoCardToggle({ armed, onToggle, disabled }) {
  * Context-sensitive controls. What you see depends on your role this turn:
  *   ACTIVE (asker)  -> pick a rank, then Accept / Reject offers 1 & 2 (+ Lie Deye)
  *   HOLDER (giver)  -> choose a card to offer (tap + button, or drag up)
- *                      (+ optional "I don't have it" claim)
+ *                      (+ optional substitute declaration)
  *   everyone else   -> isolated / muted spectator message
  */
 export default function ActionPanel({
@@ -124,8 +131,10 @@ export default function ActionPanel({
   onDecide,
   onLieDeye,
   onOpenLieDeye,
-  claimNoCard = false,
-  onToggleNoCard,
+  choosingSubstitute,
+  substituteRank,
+  onToggleSubstitute,
+  onPickSubstitute,
   compact = false,
 }) {
   const { t, textStyle } = useI18n();
@@ -149,34 +158,42 @@ export default function ActionPanel({
   } else if (game.phase === PHASES.OFFER && isHolder) {
     const nextNumber = offerNumber + 1;
     const final = nextNumber === game.maxOffers;
-    const armed = claimNoCard;
+    const armed = !final && choosingSubstitute;
     const title = selectedCardId
-      ? armed
-        ? t('nocard.offer')
-        : final
+      ? final
         ? t('action.forceCard')
         : t('action.offerFaceDown')
       : t('action.selectCard');
     content = (
       <>
         <Text style={[styles.title, compact && styles.titleCompact, textStyle]}>
-          {rich(t('action.wants'), { name: activeName, rank: hl(game.requestedRank) })}
+          {rich(t('action.wants'), { name: activeName, rank: <Text {...noTranslateProps} style={styles.hl}>{game.requestedRank}</Text> })}
         </Text>
-        <Text style={[styles.sub, final && styles.warn, armed && styles.claimSub, textStyle]}>
-          {armed
-            ? t(final ? 'nocard.armedFinal' : 'nocard.armed')
-            : final
-            ? t('action.finalOffer')
-            : t('action.offerHint', { n: nextNumber })}
-        </Text>
+        {armed && substituteRank ? (
+          <OfferDeclaration declaration={{ requestedRank: game.requestedRank, substituteRank }} style={[styles.sub, styles.claimSub]} />
+        ) : (
+          <Text style={[styles.sub, final && styles.warn, armed && styles.claimSub, textStyle]}>
+            {armed ? t('declaration.pick') : final ? t('action.finalOffer') : t('action.offerHint', { n: nextNumber })}
+          </Text>
+        )}
+        {armed && (
+          <RankPicker
+            ranks={[...game.ranks.filter((rank) => rank !== game.requestedRank), 'JOKER']}
+            substitute
+            selectedRank={substituteRank}
+            onPick={onPickSubstitute}
+            disabled={busy}
+            compact
+          />
+        )}
         <View style={styles.offerRow}>
-          <NoCardToggle armed={armed} onToggle={onToggleNoCard} disabled={busy} />
+          {!final && <SubstituteToggle armed={armed} onToggle={onToggleSubstitute} disabled={busy} />}
           <CartoonButton
             title={title}
             size="sm"
             gradient={armed ? gradients.blue : final ? gradients.danger : gradients.primary}
             lipColor={armed ? colors.darkBlue : final ? colors.darkRed : colors.darkOrange}
-            disabled={!selectedCardId}
+            disabled={!selectedCardId || (armed && !substituteRank)}
             loading={busy}
             onPress={() => onOffer(selectedCardId)}
             style={styles.flex}
@@ -185,7 +202,6 @@ export default function ActionPanel({
       </>
     );
   } else if (game.phase === PHASES.DECISION && isActive) {
-    const claims = game.offers.filter((offer) => offer.claimedNoCard);
     content = (
       <>
         {!(compact && offerNumber === 2) && (
@@ -194,14 +210,7 @@ export default function ActionPanel({
             {pendingOffer?.lieDeyeUsed ? ' 👁️' : ''}
           </Text>
         )}
-        {!!claims.length && (
-          <View style={[styles.claimBox, compact && styles.claimBoxCompact]}>
-            <Text style={[styles.claimText, textStyle]}>
-              {t('nocard.received', { offers: claims.map(({ number }) => number).join(' / ') })}
-            </Text>
-          </View>
-        )}
-        {(offerNumber === 2 || (!compact && claims.length === 0)) && (
+        {(offerNumber === 2 || !compact) && (
           <Text style={[styles.sub, offerNumber === 2 && styles.warn, textStyle]}>
             {t(offerNumber === 2 ? 'action.rejectWarn' : 'action.bluffQ')}
           </Text>
@@ -284,6 +293,7 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   rankChipCompact: { minWidth: 44, height: 44 },
+  rankChipSelected: { borderColor: colors.darkBlue, backgroundColor: colors.cream },
   rankChipPressed: { transform: [{ translateY: 3 }], shadowOpacity: 0 },
   rankText: { fontFamily: fonts.bold, fontSize: 22, color: colors.night, writingDirection: 'ltr' },
   offerRow: { flexDirection: 'row', alignItems: 'center', gap: 8, alignSelf: 'stretch' },
@@ -310,17 +320,6 @@ const styles = StyleSheet.create({
   noCardTextCol: { maxWidth: 104 },
   noCardTitle: { fontFamily: fonts.bold, fontSize: 13, color: colors.night },
   claimSub: { color: colors.blue },
-  claimBox: {
-    alignSelf: 'stretch',
-    backgroundColor: 'rgba(43,123,255,0.12)',
-    borderColor: colors.blue,
-    borderWidth: 2,
-    borderRadius: 12,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  claimBoxCompact: { paddingVertical: 0 },
-  claimText: { fontFamily: fonts.bold, fontSize: 13, color: colors.blue, textAlign: 'center' },
   // Lie Deye
   ldRow: {
     alignSelf: 'stretch',

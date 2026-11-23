@@ -447,16 +447,24 @@ async function scenario(url, clients) {
 
   const owned = holder.game.hand;
   const original = owned.map((c) => c.id);
-  assert.equal((await holder.emit('offer_card', { cardId: original[0], claimedNoCard: 'true' })).code, 'BAD_PAYLOAD');
+  for (const substituteRank of [12, { rank: 'JOKER' }, '7', heldRank]) {
+    assert.equal((await holder.emit('offer_card', { cardId: original[0], substituteRank })).code, 'BAD_DECLARATION');
+  }
+  assert.equal((await active.emit('offer_card', { cardId: original[0], substituteRank: 'JOKER' })).code, 'NOT_YOUR_TURN');
   const touches = [
     { s: 0, u: 0.5, v: 0.5, x: 0.2, y: 0.85, t: 300 },
     { s: 3, u: 0.6, v: 0.4, x: 0.6, y: 0.84, t: 900 },
   ];
-  assert.equal((await holder.emit('offer_card', { cardId: original[0], touches, claimedNoCard: true, pressDurationMs: 350 })).ok, true);
+  assert.equal((await holder.emit('offer_card', { cardId: original[0], touches, substituteRank: 'JOKER', pressDurationMs: 350 })).ok, true);
   await until(() => active.game.phase === 'DECISION');
   const firstDecision = active.game.step;
-  assert.equal(active.game.offers[0].claimedNoCard, true, 'a giver who holds the rank may attach the claim');
-  assert.ok(active.events.some((e) => e.type === 'card_offered' && e.claimedNoCard));
+  const declaration = { requestedRank: heldRank, substituteRank: 'JOKER' };
+  assert.deepEqual(active.game.offers[0].declaration, declaration, 'a giver who holds the requested rank can declare Joker');
+  await until(() => bystander.game.offers[0]);
+  assert.deepEqual(bystander.game.offers[0].declaration, declaration);
+  const offered = active.events.find((e) => e.type === 'card_offered');
+  assert.deepEqual(offered.declaration, declaration);
+  assert.equal(Object.hasOwn(offered, 'cardId'), false);
   assert.equal(active.game.offers[0].card, null, 'offered card is face-down for the receiver');
   assert.ok(holder.game.offers[0].card, 'holder sees their own offer');
 
@@ -497,6 +505,7 @@ async function scenario(url, clients) {
   await until(() => active.game.phase === 'DECISION');
   assert.equal((await active.emit('player_decision', { step: firstDecision, accept: true })).code, 'STALE_ACTION');
   assert.equal(active.game.offers.length, 2);
+  assert.deepEqual(active.game.offers.map((offer) => offer.declaration), [declaration, { requestedRank: heldRank, substituteRank: null }]);
   assert.equal((await active.emit('use_lie_deye')).ok, true);
   await until(() => active.game.lieDeye?.offerNumber === 2);
   assert.equal(active.game.lieDeye.lieCount, 0, 'the whole exchange shares one historical count');
@@ -504,7 +513,8 @@ async function scenario(url, clients) {
   await until(() => holder.game.phase === 'OFFER' && holder.game.hand.length === 3);
 
   const forcedCard = holder.game.hand.find((card) => !findWinningRank(owned.filter((other) => other.id !== card.id))).id;
-  assert.equal((await holder.emit('offer_card', { cardId: forcedCard, claimedNoCard: true })).ok, true);
+  assert.equal((await holder.emit('offer_card', { cardId: forcedCard, substituteRank: 'JOKER' })).code, 'BAD_DECLARATION');
+  assert.equal((await holder.emit('offer_card', { cardId: forcedCard })).ok, true);
   await until(() => active.game.hand.length === 5);
   assert.ok(active.game.hand.some((c) => c.id === forcedCard), '3rd card auto-accepted');
   assert.equal(holder.game.hand.length, 4);
@@ -513,8 +523,7 @@ async function scenario(url, clients) {
 
   // Bystander must never have seen any of the transferred card ids.
   assert.equal(bystander.game.lastTransfer.cardId, null);
-  assert.equal(active.game.lastTransfer.claimedNoCard, true);
-  assert.equal(active.game.lastTransfer.claimedRank, heldRank);
+  assert.equal(active.game.lastTransfer.declaration, null);
 
   // Both face-down slots are valid during the second decision.
   for (const offerIndex of [0, 1]) {

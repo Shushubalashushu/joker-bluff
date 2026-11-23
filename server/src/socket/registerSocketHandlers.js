@@ -39,13 +39,14 @@ function readProfile(payload, { auth = false, requireNickname = false } = {}) {
   return profile;
 }
 
-function validateOffer({ cardId, touches, claimedNoCard }) {
+function validateOffer({ cardId, touches, claimedNoCard, substituteRank }) {
   if (typeof cardId !== 'string' || !CARD_ID.test(cardId)) throw new GameError('BAD_CARD', 'Invalid card');
   if (touches !== undefined && (!Array.isArray(touches) || touches.length > MAX_INPUT_SAMPLES)) {
     throw new GameError('BAD_PAYLOAD', 'Invalid touch samples');
   }
-  if (claimedNoCard !== undefined && typeof claimedNoCard !== 'boolean') {
-    throw new GameError('BAD_PAYLOAD', 'Invalid bluff claim');
+  // Older clients can still send a standard offer with their disabled claim flag.
+  if ((claimedNoCard !== undefined && claimedNoCard !== false) || (substituteRank !== undefined && typeof substituteRank !== 'string')) {
+    throw new GameError('BAD_DECLARATION', 'Invalid card declaration');
   }
 }
 

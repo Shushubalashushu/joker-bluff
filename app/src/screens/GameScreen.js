@@ -133,14 +133,16 @@ export default function GameScreen() {
   const [resetNonce, setResetNonce] = useState(0);
   const [toast, setToast] = useState(null);
   const [lieDeyeOpen, setLieDeyeOpen] = useState(false);
-  const [claimMove, setClaimMove] = useState(null);
+  const [substitute, setSubstitute] = useState(null);
   // Optimistic shuffle: local id order shown until the server's game_state catches up.
   const [localOrder, setLocalOrder] = useState(null);
   const [shuffleNonce, setShuffleNonce] = useState(0);
 
   const matchId = game?.matchId;
   const moveKey = matchId ? `${matchId}:${game.step}` : null;
-  const claimNoCard = moveKey !== null && claimMove === moveKey;
+  const choosingSubstitute = moveKey !== null && substitute?.moveKey === moveKey;
+  const substituteRank = choosingSubstitute ? substitute.rank : undefined;
+  const needsSubstituteRank = choosingSubstitute && !substituteRank;
   const moveRef = useRef(moveKey);
   const matchRef = useRef(matchId);
   const pendingMove = useRef(null);
@@ -169,7 +171,6 @@ export default function GameScreen() {
   // Server events -> toast + sfx hooks.
   useEffect(() => {
     const event = events.find((e) => e.type === 'game_over')
-      ?? events.find((e) => e.type === 'card_transferred' && e.claimedNoCard)
       ?? events[events.length - 1];
     if (!event) return;
     setToast({ event, key: `${event.type}-${event.at}` });
@@ -257,14 +258,14 @@ export default function GameScreen() {
   const onLieDeye = useCallback(() => run(spendLieDeye), [run, spendLieDeye]);
   const onOffer = useCallback(
     async (cardId, dragDuration) => {
-      if (!cardId) return;
+      if (!cardId || needsSubstituteRank) return;
       const pressDurationMs = dragDuration ?? cardPresses.current.get(cardId);
       const ok = await run(() => offerCard(cardId, {
-        touches: touchesRef.current.slice(), claimedNoCard: claimNoCard, pressDurationMs,
+        touches: touchesRef.current.slice(), substituteRank, pressDurationMs,
       }));
       if (!ok && moveRef.current === moveKey) setResetNonce((n) => n + 1);
     },
-    [run, offerCard, moveKey, claimNoCard]
+    [run, offerCard, moveKey, substituteRank, needsSubstituteRank]
   );
   const onSelect = useCallback(
     (id) => {
@@ -468,8 +469,10 @@ export default function GameScreen() {
                 busy={busy}
                 onRequest={onRequest}
                 onOffer={onOffer}
-                claimNoCard={claimNoCard}
-                onToggleNoCard={() => setClaimMove(claimNoCard ? null : moveKey)}
+                choosingSubstitute={choosingSubstitute}
+                substituteRank={substituteRank}
+                onToggleSubstitute={() => setSubstitute(choosingSubstitute ? null : { moveKey, rank: null })}
+                onPickSubstitute={(rank) => setSubstitute({ moveKey, rank })}
                 onDecide={onDecide}
                 onLieDeye={onLieDeye}
                 onOpenLieDeye={() => setLieDeyeOpen(true)}
@@ -520,7 +523,7 @@ export default function GameScreen() {
                 onSelect={onSelect}
                 onDragStart={onDragStart}
                 canSelect={canOffer}
-                canDrag={canOffer}
+                canDrag={canOffer && !needsSubstituteRank}
                 onDragOffer={onOffer}
                 onTouchSample={recording ? onTouchSample : undefined}
                 onCardPress={recording ? onCardPress : undefined}

@@ -153,11 +153,11 @@ export function GameProvider({ children }) {
   const requestCard = useCallback((rank) => emitAck(C2S.REQUEST_CARD, { matchId, step, rank }), [matchId, step]);
   /**
    * `touches` = my touch trail while choosing (Lie Deye telemetry for the receiver).
-   * `claimedNoCard` is the giver's declaration. `pressDurationMs` is the chosen card's last hold.
+   * `substituteRank` is the alternative being declared. `pressDurationMs` is the chosen card's last hold.
    */
   const offerCard = useCallback(
-    (cardId, { touches = [], claimedNoCard, pressDurationMs } = {}) =>
-      emitAck(C2S.OFFER_CARD, { matchId, step, cardId, touches, claimedNoCard, pressDurationMs }),
+    (cardId, { touches = [], substituteRank, pressDurationMs } = {}) =>
+      emitAck(C2S.OFFER_CARD, { matchId, step, cardId, touches, substituteRank, pressDurationMs }),
     [matchId, step]
   );
   const decide = useCallback((accept, offerIndex) => emitAck(C2S.PLAYER_DECISION, { matchId, step, accept, offerIndex }), [matchId, step]);

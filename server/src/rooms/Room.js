@@ -363,7 +363,7 @@ class Room {
         events = this.game.offerCard(playerId, payload.cardId, {
           touches: payload.touches,
           pressDurationMs: payload.pressDurationMs,
-          claimedNoCard: payload.claimedNoCard,
+          substituteRank: payload.substituteRank,
         });
         break;
       case C2S.PLAYER_DECISION:
@@ -503,7 +503,7 @@ class Room {
       // Record only facts already published to the table.
       for (const event of events) {
         if (event.type === 'card_requested' || event.type === 'card_offered') {
-          this.botHistory.push({ type: event.type, playerId: event.playerId, rank: event.rank, claimedNoCard: event.claimedNoCard, turn });
+          this.botHistory.push({ type: event.type, playerId: event.playerId, rank: event.rank, declaration: event.declaration, turn });
         }
       }
       if (this.botHistory.length > BOT_HISTORY_LIMIT) this.botHistory.splice(0, this.botHistory.length - BOT_HISTORY_LIMIT);

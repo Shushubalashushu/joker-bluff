@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Animated, { ZoomIn, FadeIn } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import PlayingCard, { CARD_SIZES } from './PlayingCard';
+import OfferDeclaration from './OfferDeclaration';
 import { PHASES } from '../../constants/events';
 import { useI18n } from '../../i18n';
 import { rich } from '../../i18n/rich';
@@ -13,15 +14,6 @@ const FELT_BORDER = 4;
 const FELT_PADDING = 6;
 const INNER_BORDER = 2;
 const INNER_PADDING = 8;
-
-function ClaimBadge() {
-  const { t } = useI18n();
-  return (
-    <View style={styles.claimBadge} accessible accessibilityLabel={t('nocard.claim')} pointerEvents="none">
-      <Text style={styles.claimIcon}>💬</Text>
-    </View>
-  );
-}
 
 function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, width, available }) {
   const { t, textStyle } = useI18n();
@@ -44,7 +36,6 @@ function OfferSlot({ number, offer, forcedSlot, showFace, cardSize, width, avail
       <Animated.View entering={ZoomIn.springify().damping(12)} style={rejected && styles.rejectedCard}>
         {/* Holder sees their own face-down cards (unless Anti-spy is on); everyone else gets null from the server */}
         <PlayingCard card={showFace ? offer.card : null} size={cardSize} highlighted={available || offer.status === 'pending'} />
-        {offer.claimedNoCard && <ClaimBadge />}
         {rejected && (
           <View style={styles.stamp}>
             <Text style={styles.stampText}>✗</Text>
@@ -79,8 +70,6 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
   const cardWidth = (width - 2 * (FELT_BORDER + feltPadding + INNER_BORDER + INNER_PADDING + slotGap)) / game.maxOffers;
   const fittedSize = [cardSize, 'sm', 'xs'].find((size) => CARD_SIZES[size].w <= cardWidth) ?? 'xs';
   const slotWidth = Math.max(CARD_SIZES[fittedSize].w, Math.min(cardWidth, CARD_SIZES.sm.w));
-  const transfer = game.lastTransfer;
-  const showClaimTransfer = game.phase === PHASES.REQUEST && transfer?.forced && transfer.claimedNoCard;
 
   return (
     <LinearGradient colors={gradients.felt} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={[styles.felt, { padding: feltPadding }]}>
@@ -103,12 +92,6 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
                 {rich(t('table.gotAny'), { rank: <Text {...noTranslateProps} style={styles.bubbleRank}>{game.requestedRank}</Text> })}
               </Text>
             </Animated.View>
-          ) : showClaimTransfer ? (
-            <View style={[styles.bubble, styles.claimBubble]}>
-              <Text style={[styles.bubbleText, styles.claimBubbleText, compact && { fontSize: 12 }, textStyle]}>
-                {t('nocard.claim')}
-              </Text>
-            </View>
           ) : (
             <View style={[styles.bubble, styles.bubbleIdle]}>
               <Text style={[styles.bubbleIdleText, textStyle]} numberOfLines={1}>
@@ -136,6 +119,9 @@ export default function TableArea({ game, nameOf, myId, cardSize = 'md', width, 
             />
           ))}
         </View>
+        {game.offers.filter(({ declaration }) => declaration).map(({ number, declaration }) => (
+          <OfferDeclaration key={number} declaration={declaration} number={number} style={styles.declaration} />
+        ))}
       </View>
     </LinearGradient>
   );
@@ -179,8 +165,17 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
   },
   bubbleText: { fontFamily: fonts.semibold, fontSize: 16, color: colors.night },
-  claimBubble: { backgroundColor: colors.darkBlue, borderColor: colors.white },
-  claimBubbleText: { color: colors.white },
+  declaration: {
+    alignSelf: 'stretch',
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    fontFamily: fonts.semibold,
+    fontSize: 13,
+    backgroundColor: colors.cream,
+    color: colors.night,
+    textAlign: 'center',
+  },
   bubbleRank: { fontFamily: fonts.bold, color: colors.pink, fontSize: 20 },
   bubbleIdle: { backgroundColor: 'rgba(255,255,255,0.18)', borderColor: 'transparent' },
   bubbleIdleText: { fontFamily: fonts.semibold, fontSize: 14, color: colors.white },
@@ -225,18 +220,4 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   eyeText: { fontSize: 12 },
-  claimBadge: {
-    position: 'absolute',
-    top: -8,
-    left: -5,
-    width: 23,
-    height: 23,
-    borderRadius: 12,
-    backgroundColor: colors.cream,
-    borderWidth: 2,
-    borderColor: colors.purple,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  claimIcon: { fontSize: 12 },
 });
