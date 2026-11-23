@@ -22,6 +22,7 @@ import { useAudio, SFX } from '../context/AudioContext';
 import useResponsive from '../hooks/useResponsive';
 import useKeyboardLift from '../hooks/useKeyboardLift';
 import LanguageToggle from '../components/LanguageToggle';
+import RulesHelp from '../components/RulesHelp';
 import { useI18n } from '../i18n';
 import { colors, fonts, gradients } from '../theme';
 import { viewport, verticalScrollProps } from '../theme/layout';
@@ -140,8 +141,10 @@ export default function LobbyScreen() {
         </Animated.View>
       </SafeAreaView>
 
-      {/* 🌐 EN / עב - top-left, level with the persistent audio toggle (top-right) */}
-      <LanguageToggle style={[styles.langToggle, { top: r.insets.top + 12 }]} />
+      <View style={[styles.headerTools, { top: r.insets.top + 10 }]}>
+        <LanguageToggle />
+        <RulesHelp />
+      </View>
 
       <AvatarPickerModal
         visible={avatarOpen}
@@ -163,7 +166,7 @@ const styles = StyleSheet.create({
   root: viewport,
   safe: viewport,
   fill: viewport,
-  langToggle: { position: 'absolute', left: 14, zIndex: 100, elevation: 100 },
+  headerTools: { position: 'absolute', left: 14, flexDirection: 'row', alignItems: 'center', gap: 8, zIndex: 100, elevation: 100 },
   // paddingTop 56: the persistent audio toggle (48px) sits in the top-right corner
   content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 22, paddingTop: 56, paddingBottom: 24, gap: 28 },
   logo: { alignItems: 'center' },

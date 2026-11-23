@@ -6,6 +6,7 @@ import common from './locales/common';
 import lobby from './locales/lobby';
 import game from './locales/game';
 import overlays from './locales/overlays';
+import rules from './locales/rules';
 
 /**
  * English / Hebrew localization.
@@ -32,7 +33,7 @@ function merge(modules) {
   }
   return out;
 }
-export const DICTIONARY = merge([common, lobby, game, overlays]);
+export const DICTIONARY = merge([common, lobby, game, overlays, rules]);
 
 /**
  * Pure translate function (usable outside React, e.g. in utils).

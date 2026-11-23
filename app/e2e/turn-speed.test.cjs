@@ -29,8 +29,46 @@ function button(page, name) {
   return page.getByRole('button', { name, exact: true });
 }
 
-async function openPrivateGame(page, url, nickname) {
+const RULES_HEADINGS = {
+  en: ['How to Play', 'The Goal', 'Set Up', 'Turn Flow', 'Lie Deye', 'What It Takes to Own the Table'],
+  he: ['איך משחקים?', 'המטרה:', 'איך מתחילים?', 'מהלך התור:', 'Lie Deye:', 'מה צריך כדי לשלוט בשולחן?'],
+};
+
+async function checkRules(page, lang, { escape = false, live = false, whileOpen } = {}) {
+  const [title, ...sections] = RULES_HEADINGS[lang];
+  const trigger = button(page, title);
+  if (escape) {
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+  } else await trigger.click();
+  const dialog = page.getByRole('dialog', { name: title });
+  await dialog.waitFor();
+  assert.deepEqual(await dialog.getByRole('heading').allTextContents(), [title, ...sections]);
+  const heading = dialog.getByRole('heading', { name: sections[0], exact: true });
+  assert.equal(await heading.evaluate((element) => getComputedStyle(element).textAlign), lang === 'he' ? 'right' : 'left');
+  const ranks = dialog.locator('.notranslate[translate="no"]').filter({ hasText: /^J, Q, K, A$/ });
+  assert.equal(await ranks.count(), 1);
+  if (live) await dialog.getByText(lang === 'he' ? 'שעון המשחק ממשיך לרוץ.' : 'The match clock keeps running.').waitFor();
+  const finalHeading = dialog.getByRole('heading', { name: sections.at(-1), exact: true });
+  await finalHeading.scrollIntoViewIfNeeded();
+  const close = dialog.getByRole('button', { name: lang === 'he' ? 'סגירה' : 'Close', exact: true });
+  const box = await close.boundingBox();
+  assert.ok(box && box.y >= 0 && box.y + box.height <= page.viewportSize().height);
+  const lastBox = await finalHeading.boundingBox();
+  assert.ok(lastBox && lastBox.y >= 0 && lastBox.y + lastBox.height <= page.viewportSize().height);
+  await whileOpen?.();
+  if (escape) await page.keyboard.press('Escape');
+  else await close.click();
+  await dialog.waitFor({ state: 'detached' });
+  if (escape) await trigger.and(page.locator(':focus')).waitFor();
+}
+
+async function checkHomeRules(page, url, nickname) {
   await page.goto(url);
+  await checkRules(page, 'en', { escape: page.viewportSize().width > 600 });
+  await button(page, 'Switch language (English / Hebrew)').click();
+  await checkRules(page, 'he');
+  await button(page, 'החלפת שפה (אנגלית / עברית)').click();
   await page.getByRole('textbox', { name: 'Nickname' }).fill(nickname);
   await button(page, 'Private Game').click();
 }
@@ -62,7 +100,7 @@ function prepareSecondOffer(room) {
   assert.fail('expected a bot to face a second offer');
 }
 
-test('desktop and mobile players see both lobby speeds, countdowns and a real fast-mode bot move', { timeout: 90000 }, async (t) => {
+test('desktop and mobile players can read bilingual rules, use both clocks and keep playing', { timeout: 90000 }, async (t) => {
   const output = await mkdtemp(join(tmpdir(), 'jokerbluff-turn-speed-'));
   const server = createGameServer();
   let browser;
@@ -95,15 +133,17 @@ test('desktop and mobile players see both lobby speeds, countdowns and a real fa
     page.on('pageerror', (error) => errors.push(error.message));
   }
 
-  await openPrivateGame(host, url, 'Host Tester');
+  await checkHomeRules(host, url, 'Host Tester');
   await button(host, 'Create Private Lobby').click();
   const desktopFast = host.getByRole('radio', { name: 'Fast · 15 seconds' });
   const desktopStandard = host.getByRole('radio', { name: 'Standard · 2 minutes' });
   await desktopStandard.waitFor();
   assert.equal(await desktopStandard.getAttribute('aria-checked'), 'true');
+  await button(host, 'Private Game').waitFor({ state: 'detached' });
+  await checkRules(host, 'en');
   const room = [...server.rooms.rooms.values()][0];
 
-  await openPrivateGame(guest, url, 'Guest Tester');
+  await checkHomeRules(guest, url, 'Guest Tester');
   await guest.getByRole('textbox', { name: 'Enter room code' }).fill(room.code);
   await button(guest, 'Join').click();
   await guest.getByText('Standard · 2 minutes', { exact: true }).waitFor();
@@ -111,6 +151,7 @@ test('desktop and mobile players see both lobby speeds, countdowns and a real fa
   await button(guest, 'Switch language (English / Hebrew)').click();
   await guest.getByText(/רגיל.*2 דקות/).waitFor();
   assert.equal(await guest.getByRole('radio').count(), 0);
+  await checkRules(guest, 'he');
 
   await desktopFast.click();
   await guest.getByText(/מהיר.*15 שניות/).waitFor();
@@ -129,6 +170,7 @@ test('desktop and mobile players see both lobby speeds, countdowns and a real fa
     await button(host, 'הוספת בוט').click();
     await until(() => room.players.length === 3 + i);
   }
+  room.botDelay = () => 20000;
   await button(host, 'התחלת משחק!').click();
   for (const page of [host, guest]) {
     const seconds = await shownSeconds(page);
@@ -136,8 +178,27 @@ test('desktop and mobile players see both lobby speeds, countdowns and a real fa
     await countdown(page).getByText(/^(2:00|1:5[5-9])$/).waitFor();
   }
   assert.equal(room.game.phaseDuration, 120000);
+  const standardGame = room.game;
+  const matchId = room.lifecycleId;
+  const sockets = room.players.filter(({ isBot }) => !isBot).map(({ id }) => server.sessions.socketIdOf(id));
+  await host.setViewportSize({ width: 1280, height: 800 });
+  await button(host, 'התחלת משחק!').waitFor({ state: 'detached' });
+  await button(host, 'החלפת שפה (אנגלית / עברית)').click();
+  const secondsBeforeHelp = await shownSeconds(host);
+  await checkRules(host, 'en', { escape: true, live: true, whileOpen: () => wait(1200) });
+  assert.ok(await shownSeconds(host) < secondsBeforeHelp);
+  await checkRules(guest, 'he', { live: true });
+  assert.equal(room.game, standardGame);
+  assert.equal(room.lifecycleId, matchId);
+  assert.deepEqual(room.players.filter(({ isBot }) => !isBot).map(({ id }) => server.sessions.socketIdOf(id)), sockets);
+  const handOrder = () => standardGame.getStateFor(room.hostId).hand.map(({ id }) => id).join(',');
+  const beforeShuffle = handOrder();
+  await button(host, 'Shuffle my hand').click();
+  await until(() => handOrder() !== beforeShuffle);
+  await button(host, 'Switch language (English / Hebrew)').click();
 
   room.endGame(room.hostId);
+  delete room.botDelay;
   for (const page of [host, guest]) await countdown(page).waitFor({ state: 'detached' });
   await mobileFast.click();
   await guest.getByText(/מהיר.*15 שניות/).waitFor();

@@ -8,6 +8,7 @@ import PlayfulBackground from '../components/common/PlayfulBackground';
 import Avatar from '../components/common/Avatar';
 import { AUDIO_TOGGLE_SIZE } from '../components/AudioToggle';
 import LanguageToggle from '../components/LanguageToggle';
+import RulesHelp from '../components/RulesHelp';
 import TimerBar from '../components/game/TimerBar';
 import OpponentSeat from '../components/game/OpponentSeat';
 import TableArea from '../components/game/TableArea';
@@ -410,14 +411,17 @@ export default function GameScreen() {
         </View>
 
         <View style={[styles.timer, { marginTop: tight ? 6 : 10 }]}>
-          <TimerBar
-            deadline={game.deadline}
-            duration={game.phaseDuration}
-            clockOffset={clockOffset}
-            label={timerLabel}
-            frozen={game.timeFrozen}
-            compact={tight}
-          />
+          <View style={styles.timerClock}>
+            <TimerBar
+              deadline={game.deadline}
+              duration={game.phaseDuration}
+              clockOffset={clockOffset}
+              label={timerLabel}
+              frozen={game.timeFrozen}
+              compact={tight}
+            />
+          </View>
+          {!finished && !showLieDeye && <RulesHelp live />}
         </View>
 
         <GameToast message={toast?.error ? `⚠️ ${tError(toast.error)}` : describeEvent(toast?.event, nameOf, playerId, t)} eventKey={toast?.key} />
@@ -592,7 +596,8 @@ const styles = StyleSheet.create({
     ...cartoonShadow,
   },
   endText: { fontFamily: fonts.bold, color: colors.white, fontSize: 13 },
-  timer: { paddingHorizontal: 14 },
+  timer: { paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  timerClock: { flex: 1, minWidth: 0 },
   board: { flex: 1, marginTop: 2 },
   boardContent: { flexGrow: 1 },
   topRow: { flexDirection: 'row', justifyContent: 'center', flexWrap: 'wrap', paddingHorizontal: 8, paddingTop: 12 },

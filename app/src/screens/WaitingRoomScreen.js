@@ -10,6 +10,7 @@ import LobbyActionModal from '../components/lobby/LobbyActionModal';
 import TurnSpeedSelector from '../components/lobby/TurnSpeedSelector';
 import { AUDIO_TOGGLE_SIZE } from '../components/AudioToggle';
 import LanguageToggle from '../components/LanguageToggle';
+import RulesHelp from '../components/RulesHelp';
 import { useI18n } from '../i18n';
 import { useGame } from '../context/GameContext';
 import useResponsive from '../hooks/useResponsive';
@@ -130,6 +131,7 @@ export default function WaitingRoomScreen() {
           </Pressable>
           <Text style={[styles.headerTitle, r.compact && { fontSize: 20 }, textStyle]} adjustsFontSizeToFit numberOfLines={1}>{t('waiting.title')}</Text>
           <LanguageToggle compact />
+          <RulesHelp />
           <View style={{ width: AUDIO_TOGGLE_SIZE }} />
         </View>
 
