@@ -8,7 +8,7 @@ const { findWinningRank } = require('../src/game/deck');
 const config = require('../src/config');
 
 const MOVE_EVENTS = new Set(['request_card', 'offer_card', 'player_decision', 'use_lie_deye']);
-const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player']);
+const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player', 'add_bot', 'remove_bot']);
 
 /** Small client wrapper that tracks the latest pushed state. */
 function client(url, auth = {}) {
@@ -76,6 +76,45 @@ function withWaitingLobby(names, run) {
     await run({ server, seated, code: created.code, connectGuest });
   });
 }
+
+test('the lobby host can manage bot seats and start solo play over Socket.IO', { timeout: 8000 }, () =>
+  withWaitingLobby(['Host', 'Guest'], async ({ server, seated: [host, guest], code }) => {
+    assert.equal((await guest.emit('add_bot')).code, 'NOT_HOST');
+    assert.equal((await host.emit('start_game')).code, 'NOT_ENOUGH_PLAYERS');
+    const added = await host.emit('add_bot');
+    assert.equal(added.ok, true);
+    await until(() => guest.room.players.some((player) => player.id === added.botId));
+    assert.equal(guest.room.players.find((player) => player.id === added.botId).botPersonality, 'strategist');
+    assert.equal((await guest.emit('remove_bot', { botId: added.botId })).code, 'NOT_HOST');
+    assert.equal((await host.emit('remove_bot', { botId: added.botId })).ok, true);
+    await until(() => guest.room.players.length === 2);
+    assert.equal((await guest.emit('leave_room')).ok, true);
+    await until(() => host.room.players.length === 1);
+
+    for (let i = 0; i < 3; i++) assert.equal((await host.emit('add_bot')).ok, true);
+    await until(() => host.room.players.length === 4);
+    const bots = host.room.players.filter((player) => player.botPersonality);
+    assert.deepEqual(bots.map((player) => player.botPersonality), ['strategist', 'detective', 'bluffer']);
+    assert.ok(bots.every((player) => player.connected && player.tokens === 4 && !player.isHost));
+    assert.equal(server.sessions.size, 2);
+    const waitingId = host.room.lifecycleId;
+    assert.equal((await host.emit('start_game')).ok, true);
+    await until(() => host.game?.matchId && host.room.status === 'playing');
+    assert.equal((await host.emit('add_bot', { lifecycleId: waitingId })).code, 'STALE_ACTION');
+    assert.equal((await host.emit('remove_bot', { botId: bots[0].id })).code, 'IN_PROGRESS');
+    const botIds = new Set(bots.map((bot) => bot.id));
+    if (host.game.actorId === host.session.playerId && host.game.phase === 'REQUEST') {
+      assert.equal((await host.emit('request_card', { rank: host.game.ranks[0] })).ok, true);
+    }
+    await until(() => host.events.some((event) => botIds.has(event.playerId) &&
+      (event.type === 'card_requested' || event.type === 'card_offered')), 3500);
+    assert.equal(host.events.some((event) => event.type === 'timeout'), false);
+    assert.equal((await host.emit('end_game')).ok, true);
+    await until(() => host.game === null);
+    assert.equal(server.rooms.get(code).botJob, null);
+    assert.equal((await host.emit('leave_room')).ok, true);
+    assert.equal(server.rooms.get(code), null);
+  }));
 
 test('40 students on one IP can reconnect, retry room codes and play across five lobbies', { timeout: 15000 }, () =>
   withSocketServer(async ({ server, connectGuest }) => {

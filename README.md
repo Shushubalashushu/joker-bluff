@@ -10,6 +10,7 @@ joker_app/
 │   │   ├── config.js               # ports, timers, limits (env-overridable)
 │   │   ├── shared/events.js        # socket event names + phases
 │   │   ├── game/
+│   │   │   ├── BotPlayer.js        # bot personalities and decisions from redacted state
 │   │   │   ├── deck.js             # dynamic deck: N ranks × 4 + 1 Joker
 │   │   │   └── JokerBluffGame.js   # pure state machine (3-offer rule, win check, redaction)
 │   │   ├── rooms/
@@ -75,13 +76,13 @@ If you set `PUBLIC_SERVER_URL` to `""`, the app falls back to `EXPO_PUBLIC_SERVE
 > [!NOTE]
 > Free ngrok URLs change every time ngrok restarts. If you see "Not connected to the server", check that the URL in `config.js` matches the one ngrok is showing now.
 
-To play locally, open the app on **4+** devices or simulators (a match needs at least 4 players). Create a lobby on one and join with the code on the others.
+To play locally, create a private lobby on any device or simulator. Invite friends with the room code or add bots until you have at least four seats.
 
 ## Game rules as implemented
 
 | Rule | Implementation |
 |---|---|
-| Players | **Minimum 4**, maximum 8. The server requires all seated players to be online at the start. The host’s Start button waits for enough seats and for disconnected guests to reconnect or lose their reserved seat. |
+| Players | **Minimum 4**, maximum 8, including bots. The host’s Start button waits for enough seats and for seated humans to reconnect or lose their reserved seat. |
 | Deck | `N` players → first `N` ranks of `A K Q J 10 9 8 7`, × 4 suits, + 1 Joker = `4N + 1` cards (4–8 players) |
 | Deal | One random player gets **5** cards (the *holder*), the others get 4. The deal is redone if anyone starts with a winning hand. |
 | Turn | The seat right after the holder is the *active* player. They `request_card` (name a rank). |
@@ -93,6 +94,16 @@ To play locally, open the app on **4+** devices or simulators (a match needs at 
 | Leave mid-match | The deck size depends on the player count, so the match is **terminated**. Everyone gets a `game_aborted` event and goes back to the room's waiting room (same code, same group). |
 | Disconnect | Your seat is kept for 45s. The server auto-plays for disconnected guests during a match. If you don't come back in time, it's handled the same as leaving. |
 | End Game | **Host only.** Terminates the match (or the results screen) and sends everyone back to the waiting room. |
+
+### Practice with bots
+
+In a private lobby, the host can select **Add Bot** and tap the remove icon on any bot's tile. For solo practice, add three bots. You can also mix bots and humans in any of the eight seats. The lobby marks bots and translates their names and controls into English and Hebrew. Seats are fixed once play starts. End the game to change the lineup, or choose Play Again to keep it.
+
+- **Strategist** tends to accept early offers and feed plausible rank requests to help sets complete.
+- **Detective** tracks past claims and uses Lie Deye when the public history gives it a reason to check.
+- **Bluffer** makes occasional false claims and unpredictable requests.
+
+Bots use server-side rules, with randomized choices and short delays. They receive their own hand, public state and recent public requests and claims. Any private Lie Deye reading requires spending a token through the normal game rules, and a reading gives the bot the same historical information a human would see. Bots usually take one of the first two cards. A suspicious pattern of public claims or a history of false claims learned through Lie Deye can make a bot reject the second card and force a third. Bots use the same turn rules, token balances and win conditions as humans.
 
 ### 👁️ Lie Deye tokens
 | | |
@@ -119,6 +130,8 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `join_room` | `{ code, nickname, avatarId }` |
 | `leave_room` | `{ code }` |
 | `kick_player` | `{ lifecycleId, playerId }` (host only, in the waiting room) |
+| `add_bot` | `{ lifecycleId }` → `{ botId }` (host only, in the waiting room) |
+| `remove_bot` | `{ lifecycleId, botId }` (host only, in the waiting room) |
 | `start_game`, `play_again`, `end_game` | `{ lifecycleId }` (host only) |
 | `request_card` | `{ matchId, step, rank }` |
 | `offer_card` | `{ matchId, step, cardId, claimedNoCard?: boolean, pressDurationMs?: number, touches?: [{ c, u, v, x, y, t }] }`. The hold duration applies to the chosen card. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), and `t` the ms since OFFER started. |
@@ -131,7 +144,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | Server → Client | Meaning |
 |---|---|
 | `session` | `{ token, playerId }`. The client stores `token` and sends it back in `auth` on reconnect to get its seat back. |
-| `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null` |
+| `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null`. Bot seats include `botPersonality` and `botNumber`. |
 | `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
 | `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |

@@ -182,6 +182,15 @@ function registerSocketHandlers(io, { sessions, rooms }) {
       rooms.kickPlayer(currentRoom(p.lifecycleId ?? null), session.playerId, p.playerId);
     });
 
+    on(C2S.ADD_BOT, (p) => ({ botId: currentRoom(p.lifecycleId ?? null).addBot(session.playerId) }));
+
+    on(C2S.REMOVE_BOT, (p) => {
+      if (typeof p.botId !== 'string' || !/^b_[0-9a-f-]{36}$/.test(p.botId)) {
+        throw new GameError('BAD_PAYLOAD', 'Invalid bot seat');
+      }
+      currentRoom(p.lifecycleId ?? null).removeBot(session.playerId, p.botId);
+    });
+
     on(C2S.START_GAME, (p) => {
       currentRoom(p.lifecycleId ?? null).startGame(session.playerId);
     });

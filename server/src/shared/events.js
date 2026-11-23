@@ -11,6 +11,8 @@ const C2S = Object.freeze({
   JOIN_ROOM: 'join_room',
   LEAVE_ROOM: 'leave_room',
   KICK_PLAYER: 'kick_player',
+  ADD_BOT: 'add_bot',
+  REMOVE_BOT: 'remove_bot',
   UPDATE_PROFILE: 'update_profile',
   START_GAME: 'start_game',
   PLAY_AGAIN: 'play_again',

@@ -14,13 +14,15 @@ const initialState = {
   clockOffset: 0, // serverNow - Date.now()
   events: [], // public events emitted together for one server state update
   notice: null, // sticky message for the lobby, e.g. "Bob left - match ended"
-  knownPlayers: {}, // id -> {nickname, avatarId}: keeps names of players who already left
+  knownPlayers: {}, // Keeps display names and avatars for players who already left.
   concealed: false, // Anti-spy: my hand is flipped face-down (local only, never sent)
 };
 
 function rememberPlayers(known, room, game) {
   const players = {};
-  for (const p of room?.players ?? []) players[p.id] = { nickname: p.nickname, avatarId: p.avatarId };
+  for (const { id, nickname, avatarId, botPersonality, botNumber } of room?.players ?? []) {
+    players[id] = { nickname, avatarId, botPersonality, botNumber };
+  }
   for (const { id } of game?.seats ?? []) {
     if (!players[id] && known[id]) players[id] = known[id];
   }
@@ -139,6 +141,8 @@ export function GameProvider({ children }) {
   const joinRoom = useCallback((roomCode) => emitAck(C2S.JOIN_ROOM, { ...profilePayload(), code: roomCode }), []);
   const leaveRoom = useCallback(() => emitAck(C2S.LEAVE_ROOM, { code }), [code]);
   const kickPlayer = useCallback((playerId) => emitAck(C2S.KICK_PLAYER, { lifecycleId, playerId }), [lifecycleId]);
+  const addBot = useCallback(() => emitAck(C2S.ADD_BOT, { lifecycleId }), [lifecycleId]);
+  const removeBot = useCallback((botId) => emitAck(C2S.REMOVE_BOT, { lifecycleId, botId }), [lifecycleId]);
   const renamePlayer = useCallback((nickname) => emitAck(C2S.UPDATE_PROFILE, { lifecycleId, nickname }), [lifecycleId]);
   const startGame = useCallback(() => emitAck(C2S.START_GAME, { lifecycleId }), [lifecycleId]);
   const playAgain = useCallback(() => emitAck(C2S.PLAY_AGAIN, { lifecycleId }), [lifecycleId]);
@@ -175,6 +179,8 @@ export function GameProvider({ children }) {
       joinRoom,
       leaveRoom,
       kickPlayer,
+      addBot,
+      removeBot,
       renamePlayer,
       startGame,
       playAgain,
@@ -194,6 +200,8 @@ export function GameProvider({ children }) {
       joinRoom,
       leaveRoom,
       kickPlayer,
+      addBot,
+      removeBot,
       renamePlayer,
       startGame,
       playAgain,

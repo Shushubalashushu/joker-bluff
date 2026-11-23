@@ -8,6 +8,7 @@ import useKeyboardLift from '../../hooks/useKeyboardLift';
 import { useI18n } from '../../i18n';
 import { colors, fonts, gradients, cartoonShadow } from '../../theme';
 import { viewport } from '../../theme/layout';
+import { playerName } from '../../utils/playerName';
 
 export default function LobbyActionModal({ action, online, onClose, onSubmit }) {
   const [busy, setBusy] = useState(false);
@@ -29,6 +30,8 @@ export default function LobbyActionModal({ action, online, onClose, onSubmit }) 
 function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmit }) {
   const { t, tError, textStyle, alignStart } = useI18n();
   const editing = action.kind === 'rename';
+  const removingBot = action.kind === 'removeBot';
+  const removeTitle = removingBot ? 'bots.remove' : 'waiting.kick';
   const [nickname, setNickname] = useState(action.player.nickname);
   const [error, setError] = useState(null);
   const { targetRef, liftStyle } = useKeyboardLift({ margin: 100, enabled: editing });
@@ -50,7 +53,7 @@ function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmi
     <SafeAreaView style={styles.backdrop}>
       <Animated.View style={[styles.sheet, liftStyle]} accessibilityViewIsModal>
         <Text style={[styles.title, textStyle]} accessibilityRole="header">
-          {t(editing ? 'waiting.editNickname' : 'waiting.kick')}
+          {t(editing ? 'waiting.editNickname' : removeTitle)}
         </Text>
         {editing ? (
           <TextInput
@@ -71,7 +74,9 @@ function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmi
             style={[styles.input, alignStart]}
           />
         ) : (
-          <Text style={[styles.body, textStyle]}>{t('waiting.kickConfirm', { name: action.player.nickname })}</Text>
+          <Text style={[styles.body, textStyle]}>
+            {t(removingBot ? 'bots.removeConfirm' : 'waiting.kickConfirm', { name: playerName(action.player, t) })}
+          </Text>
         )}
         {!!error && <Text style={[styles.error, textStyle]} accessibilityRole="alert">{tError(error)}</Text>}
         <View style={styles.buttons}>
@@ -85,7 +90,7 @@ function ActionSheet({ action, online, busy, setBusy, onCancel, onClose, onSubmi
             onPress={onCancel}
           />
           <CartoonButton
-            title={t(editing ? 'common.save' : 'waiting.kick')}
+            title={t(editing ? 'common.save' : removeTitle)}
             size="sm"
             gradient={editing ? gradients.success : gradients.danger}
             lipColor={editing ? colors.darkGreen : colors.darkRed}

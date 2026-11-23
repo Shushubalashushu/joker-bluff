@@ -7,6 +7,7 @@ import CartoonButton from '../common/CartoonButton';
 import PlayingCard from './PlayingCard';
 import { LIE_DEYE } from '../../config';
 import { useI18n } from '../../i18n';
+import { playerName } from '../../utils/playerName';
 import { colors, fonts, gradients, cartoonShadow } from '../../theme';
 import { viewport, verticalScrollProps } from '../../theme/layout';
 
@@ -53,7 +54,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
                 <Text style={styles.medal}>🏆</Text>
                 <Avatar avatarId={winner?.avatarId ?? 0} size={72} ring={colors.gold} />
                 <Text style={styles.podiumName} numberOfLines={1}>
-                  {winner?.nickname ?? t('common.aPlayer')}
+                  {playerName(winner, t)}
                 </Text>
                 <Text style={[styles.podiumSub, textStyle]}>{t('results.quad', { rank: result.winningRank })}</Text>
                 <Animated.View entering={ZoomIn.delay(700)} style={styles.bonus}>
@@ -65,7 +66,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
                   <Text style={styles.medal}>🤡</Text>
                   <Avatar avatarId={loser.avatarId} size={60} ring={colors.red} />
                   <Text style={styles.podiumName} numberOfLines={1}>
-                    {loser.nickname}
+                    {playerName(loser, t)}
                   </Text>
                   <Text style={[styles.podiumSub, { color: colors.red }, textStyle]}>{t('results.joker')}</Text>
                 </View>
@@ -77,7 +78,7 @@ export default function GameOverModal({ visible, result, lastTransfer, economy =
                 <Animated.View key={pid} entering={FadeInUp.delay(150 + i * 80)} style={styles.handRow}>
                   <View style={styles.handWho}>
                     <Text style={styles.handName} numberOfLines={1}>
-                      {pid === myId ? t('common.you') : byId[pid]?.nickname ?? t('results.left')}
+                      {pid === myId ? t('common.you') : playerName(byId[pid], t, 'results.left')}
                     </Text>
                     {typeof tokensOf[pid] === 'number' && <Text style={styles.handTokens}>👁️ {tokensOf[pid]}</Text>}
                   </View>

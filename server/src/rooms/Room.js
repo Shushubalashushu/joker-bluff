@@ -4,9 +4,11 @@ const { randomUUID } = require('node:crypto');
 const config = require('../config');
 const { S2C, C2S } = require('../shared/events');
 const { JokerBluffGame, GameError } = require('../game/JokerBluffGame');
+const { BotPlayer, PERSONALITIES } = require('../game/BotPlayer');
 
 const ROOM_STATUS = Object.freeze({ WAITING: 'waiting', PLAYING: 'playing', FINISHED: 'finished' });
 const ACTION_GRACE_MS = 250; // latency allowance before the server auto-plays
+const BOT_HISTORY_LIMIT = 192;
 
 /** Why a match was terminated early (sent to clients in a `game_aborted` event). */
 const ABORT_REASONS = Object.freeze({
@@ -36,18 +38,23 @@ class Room {
    * @param {import('../sessions/SessionStore').SessionStore} deps.sessions
    * @param {{toRoom: Function, toPlayer: Function}} deps.transport
    */
-  constructor({ code, sessions, transport }) {
+  constructor({ code, sessions, transport, botRandom = Math.random, botDelay = (reviewing) => (reviewing ? 1050 : 650) + Math.random() * 900 }) {
     this.code = code;
     this.lifecycleId = randomUUID();
     this.sessions = sessions;
     this.transport = transport;
     this.hostId = null;
-    /** @type {{id: string, nickname: string, avatarId: number}[]} seat order */
+    /** @type {{id: string, nickname: string, avatarId: number, botPersonality?: string, botNumber?: number}[]} seat order */
     this.players = [];
     this.status = ROOM_STATUS.WAITING;
     /** @type {JokerBluffGame|null} */
     this.game = null;
     this.timer = null;
+    this.botJob = null;
+    this.botBrains = new Map();
+    this.botHistory = [];
+    this.botRandom = botRandom;
+    this.botDelay = botDelay;
     /** @type {Map<string, NodeJS.Timeout>} playerId -> disconnect grace timer */
     this.graceTimers = new Map();
     /**
@@ -80,6 +87,10 @@ class Room {
 
   get connectedCount() {
     return this.players.filter((p) => this.sessions.isConnected(p.id)).length;
+  }
+
+  _ready(player) {
+    return !!player && (!!player.botPersonality || this.sessions.isConnected(player.id));
   }
 
   nicknameOf(playerId) {
@@ -117,7 +128,40 @@ class Room {
     if (hostId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can remove players');
     this.assertWaiting();
     if (playerId === hostId) throw new GameError('CANNOT_KICK_SELF', 'The host cannot remove themself');
-    if (!this.hasPlayer(playerId)) throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
+    if (!this.players.some((p) => p.id === playerId && !p.botPersonality)) {
+      throw new GameError('PLAYER_NOT_FOUND', 'That player is no longer in the lobby');
+    }
+  }
+
+  addBot(byPlayerId) {
+    this._assertCanManageBots(byPlayerId);
+    const id = `b_${randomUUID()}`;
+    this.assertCanSeat(id);
+    const bots = this.players.filter((p) => p.botPersonality);
+    const counts = Object.keys(PERSONALITIES).map((personality) => ({
+      personality, count: bots.filter((p) => p.botPersonality === personality).length,
+    }));
+    counts.sort((a, b) => a.count - b.count);
+    const botPersonality = counts[0].personality;
+    const { nickname, avatarId } = PERSONALITIES[botPersonality];
+    let botNumber = 1;
+    while (bots.some((bot) => bot.botPersonality === botPersonality && bot.botNumber === botNumber)) botNumber++;
+    this.players.push({ id, nickname: botNumber === 1 ? nickname : `${nickname} ${botNumber}`, avatarId, botPersonality, botNumber });
+    this.broadcast();
+    return id;
+  }
+
+  removeBot(byPlayerId, botId) {
+    this._assertCanManageBots(byPlayerId);
+    if (!this.players.some((p) => p.id === botId && p.botPersonality)) {
+      throw new GameError('BOT_NOT_FOUND', 'That bot is no longer in the lobby');
+    }
+    this.removePlayer(botId);
+  }
+
+  _assertCanManageBots(byPlayerId) {
+    if (byPlayerId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can manage bots');
+    this.assertWaiting();
   }
 
   /**
@@ -130,10 +174,16 @@ class Room {
     if (idx === -1) return;
     const [leaver] = this.players.splice(idx, 1);
     this._clearGrace(playerId);
+    if (leaver.botPersonality) this.tokenBank.delete(playerId);
 
     if (this.hostId === playerId) {
-      const next = this.players.find((p) => this.sessions.isConnected(p.id)) || this.players[0];
+      const humans = this.players.filter((p) => !p.botPersonality);
+      const next = humans.find((p) => this.sessions.isConnected(p.id)) || humans[0];
       this.hostId = next ? next.id : null;
+      if (!next) {
+        for (const bot of this.players) this.tokenBank.delete(bot.id);
+        this.players = [];
+      }
     }
 
     if (this.status === ROOM_STATUS.PLAYING) {
@@ -179,6 +229,7 @@ class Room {
     if (this.connectedCount === 0) this.emptySince = this.emptySince || Date.now();
     else this.emptySince = null;
     if (this.game && this.game.onConnectionChanged()) this._schedule();
+    else this._scheduleBot();
     this.broadcast();
   }
 
@@ -195,20 +246,23 @@ class Room {
     if (this.players.length < config.MIN_PLAYERS) {
       throw new GameError('NOT_ENOUGH_PLAYERS', `Need at least ${config.MIN_PLAYERS} players`, { min: config.MIN_PLAYERS });
     }
-    if (this.connectedCount !== this.players.length) {
+    if (!this.players.every((player) => this._ready(player))) {
       throw new GameError('PLAYERS_OFFLINE', 'Wait for offline players to reconnect or leave the lobby');
     }
 
     const game = new JokerBluffGame(
       this.players.map((p) => p.id),
       {
-        isConnected: (id) => this.hasPlayer(id) && this.sessions.isConnected(id),
+        isConnected: (id) => this._ready(this.players.find((p) => p.id === id)),
         // Carry-over: each player brings their current room balance into the match.
         tokenBalances: new Map(this.players.map((p) => [p.id, this.tokenBalance(p.id)])),
       }
     );
     const events = game.start();
     this.game = game;
+    this.botHistory = [];
+    this.botBrains = new Map(this.players.filter((p) => p.botPersonality)
+      .map((p) => [p.id, new BotPlayer(p.botPersonality, this.botRandom)]));
     this.lifecycleId = randomUUID();
     this.tokensSettled = false;
     this.status = ROOM_STATUS.PLAYING;
@@ -277,14 +331,18 @@ class Room {
   destroy() {
     clearTimeout(this.timer);
     this.timer = null;
+    this._clearBotJob();
+    this.botBrains.clear();
+    this.botHistory = [];
     for (const t of this.graceTimers.values()) clearTimeout(t);
     this.graceTimers.clear();
     this.game = null;
   }
 
   pruneTokenBank() {
+    const botIds = new Set(this.players.filter((p) => p.botPersonality).map((p) => p.id));
     for (const id of this.tokenBank.keys()) {
-      if (!this.sessions.getByPlayerId(id)) this.tokenBank.delete(id);
+      if (!botIds.has(id) && !this.sessions.getByPlayerId(id)) this.tokenBank.delete(id);
     }
   }
 
@@ -303,7 +361,8 @@ class Room {
         nickname: p.nickname,
         avatarId: p.avatarId,
         isHost: p.id === this.hostId,
-        connected: this.sessions.isConnected(p.id),
+        connected: this._ready(p),
+        ...(p.botPersonality ? { botPersonality: p.botPersonality, botNumber: p.botNumber } : {}),
         tokens: this.tokenBalance(p.id),
       })),
       lieDeye: { ...config.LIE_DEYE },
@@ -314,7 +373,7 @@ class Room {
   broadcast() {
     this.transport.toRoom(this.code, S2C.ROOM_STATE, this.publicState());
     for (const p of this.players) {
-      this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
+      if (!p.botPersonality) this.transport.toPlayer(p.id, S2C.GAME_STATE, this._matchStateFor(p.id));
     }
   }
 
@@ -325,6 +384,9 @@ class Room {
   _abortGame(info) {
     clearTimeout(this.timer);
     this.timer = null;
+    this._clearBotJob();
+    this.botBrains.clear();
+    this.botHistory = [];
     this.game = null;
     this.status = ROOM_STATUS.WAITING;
     this.lifecycleId = randomUUID();
@@ -339,6 +401,16 @@ class Room {
   }
 
   _afterGameChange(events) {
+    if (this.botBrains.size) {
+      const turn = events.some((event) => event.type === 'card_transferred') ? this.game.lastTransfer.turn : this.game.turn;
+      // Record only facts already published to the table.
+      for (const event of events) {
+        if (event.type === 'card_requested' || event.type === 'card_offered') {
+          this.botHistory.push({ type: event.type, playerId: event.playerId, rank: event.rank, claimedNoCard: event.claimedNoCard, turn });
+        }
+      }
+      if (this.botHistory.length > BOT_HISTORY_LIMIT) this.botHistory.splice(0, this.botHistory.length - BOT_HISTORY_LIMIT);
+    }
     this._syncTokenBank();
     if (this.game.isFinished) {
       this.status = ROOM_STATUS.FINISHED;
@@ -373,6 +445,7 @@ class Room {
   _schedule() {
     clearTimeout(this.timer);
     this.timer = null;
+    this._scheduleBot();
     const game = this.game;
     if (!game || game.isFinished || !game.deadline) return;
     const step = game.step;
@@ -383,10 +456,46 @@ class Room {
     this.timer.unref?.();
   }
 
+  _clearBotJob() {
+    if (this.botJob) clearTimeout(this.botJob.timer);
+    this.botJob = null;
+  }
+
+  _scheduleBot() {
+    const game = this.game;
+    const playerId = game?.actorId;
+    const brain = this.botBrains.get(playerId);
+    if (!brain || this.connectedCount === 0) return this._clearBotJob();
+    const step = game.step;
+    if (this.botJob?.game === game && this.botJob.step === step) return;
+    this._clearBotJob();
+    const reviewing = !!game.getStateFor(playerId).lieDeye;
+    const delay = Math.max(0, Math.min(this.botDelay(reviewing), game.deadline - Date.now() - 20));
+    const job = { game, step, timer: null };
+    job.timer = setTimeout(() => {
+      if (this.botJob !== job) return;
+      this.botJob = null;
+      if (this.game !== game || game.step !== step || this.connectedCount === 0) return;
+      try {
+        const { event, payload } = brain.choose(game.getStateFor(playerId), this.botHistory);
+        this.act(playerId, event, payload);
+      } catch (err) {
+        console.error(`[room ${this.code}] bot move failed`, err);
+        if (this.game === game && game.step === step) this._autoPlay();
+      }
+    }, delay);
+    job.timer.unref?.();
+    this.botJob = job;
+  }
+
   _onTimeout() {
     this.timer = null;
     if (!this.game || this.game.isFinished) return;
     if (Date.now() < this.game.deadline + ACTION_GRACE_MS) return this._schedule();
+    this._autoPlay();
+  }
+
+  _autoPlay() {
     try {
       this._afterGameChange(this.game.handleTimeout());
     } catch (err) {

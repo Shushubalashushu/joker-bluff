@@ -24,6 +24,7 @@ import useResponsive from '../hooks/useResponsive';
 import { PHASES } from '../constants/events';
 import { TOUCH_TELEMETRY } from '../config';
 import { describeEvent } from '../utils/describeEvent';
+import { playerName } from '../utils/playerName';
 import { colors, fonts, gradients, cartoonShadow } from '../theme';
 import { viewport, verticalScrollProps } from '../theme/layout';
 
@@ -144,7 +145,7 @@ export default function GameScreen() {
 
   const playersById = useMemo(() => Object.fromEntries((room?.players || []).map((p) => [p.id, p])), [room]);
   const nameOf = useCallback(
-    (id) => playersById[id]?.nickname ?? knownPlayers[id]?.nickname ?? t('common.aPlayer'),
+    (id) => playerName(playersById[id] ?? knownPlayers[id], t),
     [playersById, knownPlayers, t]
   );
 

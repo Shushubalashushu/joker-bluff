@@ -17,6 +17,7 @@ import { LIE_DEYE, MIN_PLAYERS } from '../config';
 import { colors, fonts, gradients, cartoonShadow } from '../theme';
 import { viewport, verticalScrollProps } from '../theme/layout';
 import { noTranslateProps } from '../utils/webTranslation';
+import { playerName } from '../utils/playerName';
 
 // Grayed-out look for the host's Start button while the table is short-handed.
 const DISABLED_GRADIENT = ['#C9C3D9', '#A59DBB'];
@@ -24,6 +25,8 @@ const DISABLED_LIP = '#7E7696';
 
 function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
   const { t, textStyle } = useI18n();
+  const name = playerName(player, t);
+  const actionLabel = isMe ? 'waiting.editNickname' : player.botPersonality ? 'bots.removePlayer' : 'waiting.kickPlayer';
   return (
     <Animated.View entering={ZoomIn.springify()} style={[styles.tile, isMe && styles.tileMe]}>
       {player.isHost && <Text style={styles.crown}>👑</Text>}
@@ -33,7 +36,7 @@ function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
           disabled={actionDisabled}
           accessibilityRole="button"
           accessibilityState={{ disabled: actionDisabled }}
-          accessibilityLabel={t(isMe ? 'waiting.editNickname' : 'waiting.kickPlayer', { name: player.nickname })}
+          accessibilityLabel={t(actionLabel, { name })}
           style={[styles.tileAction, actionDisabled && styles.tileActionDisabled]}
         >
           <Ionicons name={isMe ? 'pencil-outline' : 'person-remove-outline'} size={19} color={isMe ? colors.purple : colors.red} />
@@ -41,9 +44,11 @@ function PlayerTile({ player, isMe, avatarSize, onAction, actionDisabled }) {
       )}
       <Avatar avatarId={player.avatarId} size={avatarSize} style={!player.connected && { opacity: 0.4 }} />
       <View style={styles.tileNameFrame}>
-        <Text style={styles.tileName} numberOfLines={1} ellipsizeMode="tail">{player.nickname}</Text>
+        <Text style={styles.tileName} numberOfLines={1} ellipsizeMode="tail">{name}</Text>
       </View>
-      <Text style={[styles.tileSub, textStyle]}>{t(isMe ? 'common.you' : player.connected ? 'waiting.ready' : 'waiting.offline')}</Text>
+      <Text style={[styles.tileSub, textStyle]}>
+        {t(player.botPersonality ? 'bots.badge' : isMe ? 'common.you' : player.connected ? 'waiting.ready' : 'waiting.offline')}
+      </Text>
       {typeof player.tokens === 'number' && (
         <View style={styles.tokenPill} accessibilityLabel={t('ld.a11yTokens', { count: player.tokens })}>
           <Text style={styles.tokenText}>👁️ {player.tokens}</Text>
@@ -78,10 +83,10 @@ function AbortBanner({ notice, playerId, onClose }) {
 }
 
 export default function WaitingRoomScreen() {
-  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, renamePlayer, notice, clearNotice } = useGame();
+  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, renamePlayer, addBot, removeBot, notice, clearNotice } = useGame();
   const r = useResponsive();
   const { t, tError, textStyle } = useI18n();
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(null);
   const [error, setError] = useState(null);
   const [action, setAction] = useState(null);
 
@@ -100,11 +105,12 @@ export default function WaitingRoomScreen() {
   const share = () =>
     Share.share({ message: t('waiting.shareMessage', { code: room.code }) }).catch(() => {});
 
-  const onStart = async () => {
-    setBusy(true);
+  const run = async (kind, send) => {
+    if (busy) return;
+    setBusy(kind);
     setError(null);
-    const res = await startGame();
-    setBusy(false);
+    const res = await send();
+    setBusy(null);
     if (!res.ok) setError(res);
   };
 
@@ -167,17 +173,30 @@ export default function WaitingRoomScreen() {
           </View>
 
           {/* Players */}
+          {isHost && n < room.maxPlayers && (
+            <CartoonButton
+              title={t('bots.add')}
+              size="sm"
+              gradient={gradients.blue}
+              lipColor={colors.darkBlue}
+              icon={<Ionicons name="person-add" size={18} color={colors.white} />}
+              disabled={!!busy || connection !== 'online'}
+              loading={busy === 'bot'}
+              onPress={() => run('bot', addBot)}
+            />
+          )}
           <View style={styles.grid}>
             {players.map((player) => {
               const isMe = player.id === playerId;
+              const kind = isMe ? 'rename' : player.botPersonality ? 'removeBot' : 'kick';
               return (
                 <PlayerTile
                   key={player.id}
                   player={player}
                   isMe={isMe}
                   avatarSize={avatarSize}
-                  onAction={isMe || isHost ? () => setAction({ kind: isMe ? 'rename' : 'kick', player }) : undefined}
-                  actionDisabled={busy || connection !== 'online'}
+                  onAction={isMe || isHost ? () => setAction({ kind, player }) : undefined}
+                  actionDisabled={!!busy || connection !== 'online'}
                 />
               );
             })}
@@ -203,9 +222,9 @@ export default function WaitingRoomScreen() {
               lipColor={canStart ? colors.darkGreen : DISABLED_LIP}
               icon={<Text style={{ fontSize: canStart ? 26 : 20 }}>{canStart ? '🚀' : '⏳'}</Text>}
               textStyle={!canStart && { fontSize: r.compact ? 15 : 17 }}
-              disabled={!canStart || connection !== 'online'}
-              loading={busy}
-              onPress={onStart}
+              disabled={!canStart || !!busy || connection !== 'online'}
+              loading={busy === 'start'}
+              onPress={() => run('start', startGame)}
             />
           ) : (
             <View style={[styles.waitBox, r.compact && { paddingVertical: 14 }]}>
@@ -221,7 +240,7 @@ export default function WaitingRoomScreen() {
           action={action}
           online={connection === 'online'}
           onClose={() => setAction(null)}
-          onSubmit={action.kind === 'rename' ? renamePlayer : kickPlayer}
+          onSubmit={action.kind === 'rename' ? renamePlayer : action.kind === 'removeBot' ? removeBot : kickPlayer}
         />
       )}
     </View>

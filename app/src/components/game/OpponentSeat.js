@@ -11,6 +11,7 @@ import Animated, {
 import { Ionicons } from '@expo/vector-icons';
 import Avatar from '../common/Avatar';
 import { useI18n } from '../../i18n';
+import { playerName } from '../../utils/playerName';
 import { colors, fonts } from '../../theme';
 
 /**
@@ -22,7 +23,7 @@ import { colors, fonts } from '../../theme';
  */
 export default function OpponentSeat({ player, seat, spotlight, muted, acting, role, compact = false, size: sizeProp, width = 78 }) {
   const { t, textStyle } = useI18n();
-  const playerName = player?.nickname ?? t('common.aPlayer');
+  const name = playerName(player, t);
   const size = sizeProp || (compact ? 46 : 54);
   const pulse = useSharedValue(0);
 
@@ -43,7 +44,7 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
   const connected = player?.connected !== false;
 
   return (
-    <View style={[styles.wrap, { width }, muted && styles.mutedWrap]} accessibilityLabel={muted ? t('seat.a11yMuted', { name: playerName }) : playerName}>
+    <View style={[styles.wrap, { width }, muted && styles.mutedWrap]} accessibilityLabel={muted ? t('seat.a11yMuted', { name }) : name}>
       <View style={{ width: size + 14, height: size + 14, alignItems: 'center', justifyContent: 'center' }}>
         {spotlight && (
           <Animated.View
@@ -87,7 +88,7 @@ export default function OpponentSeat({ player, seat, spotlight, muted, acting, r
       </View>
 
       <View style={styles.nameFrame}>
-        <Text style={[styles.name, spotlight && styles.nameSpot]} numberOfLines={1} ellipsizeMode="tail">{playerName}</Text>
+        <Text style={[styles.name, spotlight && styles.nameSpot]} numberOfLines={1} ellipsizeMode="tail">{name}</Text>
       </View>
       {!!role && (
         <View style={[styles.role, role === 'GIVER' ? styles.roleGiver : styles.roleAsker]}>
