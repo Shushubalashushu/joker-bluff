@@ -4,21 +4,10 @@ const { C2S, PHASES } = require('../shared/events');
 const { isJoker, findWinningRank } = require('./deck');
 
 const PERSONALITIES = Object.freeze({
-  strategist: { bluff: 0.06, feed: 12, read: 0.34, reject: 0.08, rejectSecond: 0.08 },
-  detective: { bluff: 0.10, feed: 8, read: 0.80, reject: 0.15, rejectSecond: 0.18 },
-  bluffer: { bluff: 0.23, feed: 7, read: 0.28, reject: 0.13, rejectSecond: 0.12 },
+  strategist: { bluff: 0.06, feed: 12, read: 0.34, reject: 0.08, rejectSecond: 0.08, pace: 0 },
+  detective: { bluff: 0.10, feed: 8, read: 0.80, reject: 0.15, rejectSecond: 0.18, pace: 0.035 },
+  bluffer: { bluff: 0.23, feed: 7, read: 0.28, reject: 0.13, rejectSecond: 0.12, pace: -0.025 },
 });
-
-/** A triangular distribution with a 13s mode and a 10s mean over the full 2–15s range. */
-function botThinkDelay(maxDelay, random = Math.random) {
-  const max = Math.min(15000, maxDelay);
-  if (max <= 0) return 0;
-  const min = Math.min(2000, max);
-  const mode = 11 / 13;
-  const roll = random();
-  const fraction = roll < mode ? Math.sqrt(roll * mode) : 1 - Math.sqrt((1 - roll) * (1 - mode));
-  return Math.round(min + fraction * (max - min));
-}
 
 function countRank(cards, rank) {
   return cards.filter((card) => card.rank === rank).length;
@@ -41,6 +30,33 @@ class BotPlayer {
     this.traits = PERSONALITIES[personality];
     this.random = random;
     this.knownLieCounts = new Map();
+  }
+
+  /** Sample the pause before choosing an action, using independent randomness. */
+  thinkDelay(state, budget, random = Math.random) {
+    const ceiling = Math.min(15500, Math.max(0, budget) * 0.84);
+    if (ceiling === 0) return 0;
+    const scale = Math.min(1, ceiling / 12000);
+    // Every situation can use every range. Private cards change the odds only slightly.
+    const deliberate = Math.min(0.60, 0.13 + this.traits.pace + this._timingPressure(state));
+    const roll = random();
+    if (roll < deliberate) return Math.round(3200 * scale + random() * (ceiling - 3200 * scale));
+    if (roll < deliberate + 0.20) return Math.round((1800 + random() * 5000) * scale);
+    return Math.round((1000 + random() * 2300) * scale);
+  }
+
+  _timingPressure(state) {
+    if (state.phase === PHASES.REQUEST) {
+      return state.ranks.some((rank) => countRank(state.hand, rank) >= 2) ? 0 : 0.06;
+    }
+    if (state.phase === PHASES.OFFER) {
+      return 0.08 * state.offers.length + (state.hand.some(isJoker) ? 0.06 : 0);
+    }
+    const pending = state.offers.at(-1);
+    const claim = pending.claimedNoCard ? (state.canUseLieDeye ? 0.19 : 0.10) : 0;
+    const secondOffer = state.offers.length === 2 ? 0.20 : 0;
+    const review = state.timeFrozen ? 0.24 : 0;
+    return claim + secondOffer + review;
   }
 
   choose(state, history) {
@@ -122,4 +138,4 @@ class BotPlayer {
   }
 }
 
-module.exports = { BotPlayer, PERSONALITIES, botThinkDelay };
+module.exports = { BotPlayer, PERSONALITIES };

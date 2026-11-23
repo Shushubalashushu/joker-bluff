@@ -108,7 +108,7 @@ In a private lobby, the host can select **Add Bot** and tap the remove icon on a
 
 Each match privately assigns a mix of Strategists, Detectives and Bluffers. A bot's name and avatar stay with its lobby seat while its play style can change between matches. Strategists tend to trust new opponents and feed plausible requests. Detectives pay closer attention to past claims. Bluffers make occasional false claims and unexpected requests based on the cards and situation.
 
-Bots use the same turn rules, token balances and win conditions as humans. They play from their own cards and public history, and spend a token to see a private Lie Deye reading. They favor building and protecting sets, can hold a freshly received Joker to slow its circulation, and usually take one of the first two offers. They can force a third offer when they have reason for suspicion. Bots take about 2–15 seconds per move in Standard mode and about 2–6.5 seconds in Fast mode. Shorter remaining clocks reduce that range.
+Bots use the same turn rules, token balances and win conditions as humans. They play from their own cards and public history, and spend a token to see a private Lie Deye reading. They favor building and protecting sets, can hold a freshly received Joker to slow its circulation, and usually take one of the first two offers. They can force a third offer when they have reason for suspicion. Straightforward moves often take 1–3 seconds. Second offers and Lie Deye reviews can bring longer pauses, up to about 12 seconds in Fast and 15 seconds in Standard. Quick and slow replies are possible in every situation, and pacing is sampled before the bot chooses its move. Short remaining clocks scale down the delay.
 
 ### 👁️ Lie Deye tokens
 | | |

@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { setTimeout: wait } = require('node:timers/promises');
-const { BotPlayer, botThinkDelay } = require('../src/game/BotPlayer');
+const { BotPlayer } = require('../src/game/BotPlayer');
 const { JokerBluffGame } = require('../src/game/JokerBluffGame');
 const { buildDeck, findWinningRank, isJoker } = require('../src/game/deck');
 const { Room } = require('../src/rooms/Room');
@@ -150,22 +150,56 @@ test('a freshly received Joker is offered less often even though a winning pass 
   assert.equal(new BotPlayer('bluffer', () => 0).choose(winning, []).payload.cardId, joker.id);
 });
 
-test('bot pacing samples a broad 2–15s range and adapts to shorter decision clocks', () => {
-  const random = randomFrom(731);
-  const delays = Array.from({ length: 10000 }, () => botThinkDelay(600000, random));
-  const mean = delays.reduce((total, delay) => total + delay, 0) / delays.length;
-  assert.ok(mean > 9800 && mean < 10200, `mean delay: ${mean}ms`);
-  assert.ok(Math.min(...delays) < 2500 && Math.max(...delays) > 14500);
-  assert.ok(delays.some((delay) => delay >= 6800 && delay <= 7200));
-  assert.ok(delays.every((delay) => delay >= 2000 && delay <= 15000));
-  const short = Array.from({ length: 100 }, () => botThinkDelay(9980, random));
-  assert.ok(short.every((delay) => delay > 2000 && delay <= 9980));
-  assert.ok(new Set(short).size > 90);
-  assert.equal(botThinkDelay(180, random), 180);
-  assert.equal(botThinkDelay(0, random), 0);
+test('routine and tense reactions have different pacing but share quick and slow replies', (t) => {
+  const bot = new BotPlayer('detective');
+  const first = { claimedNoCard: false };
+  const routine = { phase: PHASES.DECISION, offers: [first] };
+  const tense = { ...routine, offers: [first, { claimedNoCard: true }], canUseLieDeye: true };
+  const sample = (state, budget = 14350) => {
+    const random = randomFrom(731);
+    return Array.from({ length: 6000 }, () => bot.thinkDelay(state, budget, random));
+  };
+  const quick = (samples) => samples.filter((ms) => ms <= 3000).length / samples.length;
+  const slow = (samples) => samples.filter((ms) => ms >= 8500).length / samples.length;
+  const ordinary = sample(routine);
+  const suspicious = sample(tense);
+  t.diagnostic(`Moves within three seconds: ${quick(ordinary).toFixed(2)} routine, ${quick(suspicious).toFixed(2)} tense.`);
+  assert.ok(quick(ordinary) > 0.55 && quick(suspicious) > 0.20);
+  assert.ok(quick(ordinary) - quick(suspicious) > 0.23);
+  assert.ok(slow(ordinary) > 0.04 && slow(suspicious) > slow(ordinary) * 2);
+  assert.ok(Math.max(...suspicious) > 11500 && Math.max(...suspicious) < 12200);
+  assert.ok(Math.max(...sample(tense, 119350)) > 14500);
+  for (const budget of [0, 180, 4500, 14350, 119350]) {
+    assert.ok(sample(tense, budget).every((ms) => ms >= 0 && ms <= budget));
+  }
 });
 
-test('fast rooms give bots a shorter think budget and bots act before the normal timeout', async () => {
+test('pacing samples independently of the action and weakly weights private Joker possession', () => {
+  const { cards } = buildDeck(4);
+  const regular = { phase: PHASES.OFFER, hand: [...cards.slice(0, 3), cards[4], cards[8]], offers: [], requestedRank: 'A', turn: 1 };
+  const withJoker = { ...regular, hand: [...regular.hand.slice(0, 4), cards.find(isJoker)] };
+  const bot = new BotPlayer('bluffer', () => assert.fail('pacing consumed action randomness'));
+  const sample = (state) => {
+    const random = randomFrom(413);
+    return Array.from({ length: 10000 }, () => bot.thinkDelay(state, 14350, random));
+  };
+  const ordinary = sample(regular);
+  const joker = sample(withJoker);
+  for (const threshold of [2000, 3000, 5000, 7500, 10000]) {
+    const below = (samples) => samples.filter((ms) => ms < threshold).length / samples.length;
+    assert.ok(Math.abs(below(ordinary) - below(joker)) < 0.07);
+  }
+  assert.ok(joker.some((ms) => ms < 2000) && ordinary.some((ms) => ms > 10000));
+  const rolls = [0.95, 0.20];
+  const bluff = new BotPlayer('bluffer', () => 0);
+  const bluffState = { ...regular, requestedRank: 'K' };
+  assert.ok(bluff.thinkDelay(bluffState, 14350, () => rolls.shift()) < 1500);
+  const move = bluff.choose(bluffState, []);
+  assert.equal(move.payload.claimedNoCard, true);
+  assert.notEqual(move.payload.cardId, regular.hand.find((card) => card.rank === 'K').id);
+});
+
+test('fast rooms reserve a deadline buffer without the previous 6.5-second cap', async () => {
   const budgets = [];
   const { room, botIds, publicEvents } = setupRoom(1, 3, { botDelay: (budget) => {
     budgets.push(budget);
@@ -178,7 +212,7 @@ test('fast rooms give bots a shorter think budget and bots act before the normal
     for (let i = 0; !publicEvents.some((event) => botIds.includes(event.playerId)) && i < 50; i++) await wait(5);
     assert.ok(publicEvents.some((event) => botIds.includes(event.playerId)));
     assert.ok(publicEvents.every((event) => event.type !== 'timeout'));
-    assert.ok(budgets.length > 0 && budgets.every((budget) => budget === 6500));
+    assert.ok(budgets.length > 0 && budgets.every((budget) => budget > 13500 && budget <= 14350));
   } finally {
     room.destroy();
   }

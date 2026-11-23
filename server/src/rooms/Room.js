@@ -6,12 +6,11 @@ const { S2C, C2S } = require('../shared/events');
 const { AVATAR_COUNT } = require('../utils/sanitize');
 const { shuffle } = require('../game/deck');
 const { JokerBluffGame, GameError } = require('../game/JokerBluffGame');
-const { BotPlayer, PERSONALITIES, botThinkDelay } = require('../game/BotPlayer');
+const { BotPlayer, PERSONALITIES } = require('../game/BotPlayer');
 
 const ROOM_STATUS = Object.freeze({ WAITING: 'waiting', PLAYING: 'playing', FINISHED: 'finished' });
 const ACTION_GRACE_MS = 250; // latency allowance before the server auto-plays
-const BOT_DEADLINE_BUFFER_MS = 250;
-const FAST_BOT_MAX_THINK_MS = 6500;
+const BOT_DEADLINE_BUFFER_MS = 650;
 const BOT_HISTORY_LIMIT = 192;
 const BOT_NAMES = [
   ['Bamba', 'במבה'], ['Boba', 'בובה'], ['Coco', 'קוקו'], ['Gigi', 'ג׳יג׳י'],
@@ -47,7 +46,7 @@ class Room {
    * @param {import('../sessions/SessionStore').SessionStore} deps.sessions
    * @param {{toRoom: Function, toPlayer: Function}} deps.transport
    */
-  constructor({ code, sessions, transport, botRandom = Math.random, botDelay = botThinkDelay, setupRandom = Math.random }) {
+  constructor({ code, sessions, transport, botRandom = Math.random, botDelay, setupRandom = Math.random }) {
     this.code = code;
     this.lifecycleId = randomUUID();
     this.sessions = sessions;
@@ -494,8 +493,9 @@ class Room {
     if (this.botJob?.game === game && this.botJob.step === step) return;
     this._clearBotJob();
     const remaining = Math.max(0, game.deadline - Date.now() - BOT_DEADLINE_BUFFER_MS);
-    const budget = this.turnSpeed === 'fast' ? Math.min(remaining, FAST_BOT_MAX_THINK_MS) : remaining;
-    const delay = Math.min(this.botDelay(budget), budget);
+    const delay = this.botDelay
+      ? Math.min(this.botDelay(remaining), remaining)
+      : brain.thinkDelay(game.getStateFor(playerId), remaining);
     const job = { game, step, timer: null };
     job.timer = setTimeout(() => {
       if (this.botJob !== job) return;

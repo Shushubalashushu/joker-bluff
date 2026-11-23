@@ -12,6 +12,7 @@ const { promisify } = require('node:util');
 const { chromium } = require('playwright');
 const express = require('../../server/node_modules/express');
 const { createGameServer } = require('../../server/src/index');
+const { BotPlayer } = require('../../server/src/game/BotPlayer');
 const { findWinningRank } = require('../../server/src/game/deck');
 
 async function until(read, timeout = 6000) {
@@ -44,19 +45,21 @@ async function shownSeconds(page) {
   return Number((await timer.getAttribute('aria-label')).match(/\d+/)[0]);
 }
 
-// Skip human-only opening moves so the test always observes a real bot timer.
-function advanceToBot(room) {
-  for (let i = 0; i < 4; i++) {
-    const { actorId, phase } = room.game;
-    if (room.botBrains.has(actorId)) return;
-    const { hand, ranks } = room.game.getStateFor(actorId);
+// Set up a claimed second offer for a bot without waiting on opening moves.
+function prepareSecondOffer(room) {
+  for (let i = 0; i < 12; i++) {
+    const { actorId, activeId, phase } = room.game;
+    const botAsker = room.botBrains.has(activeId);
+    const { hand, ranks, offers } = room.game.getStateFor(actorId);
+    if (phase === 'DECISION' && botAsker && offers.length === 2) return;
     if (phase === 'REQUEST') room.act(actorId, 'request_card', { rank: ranks[0] });
     else if (phase === 'OFFER') {
-      const card = hand.find((candidate) => !findWinningRank(hand.filter((other) => other !== candidate)));
-      room.act(actorId, 'offer_card', { cardId: card.id });
-    } else room.act(actorId, 'player_decision', { accept: true });
+      const owned = [...hand, ...offers.map((offer) => offer.card)];
+      const card = hand.find((candidate) => !findWinningRank(owned.filter((other) => other !== candidate)));
+      room.act(actorId, 'offer_card', { cardId: card.id, claimedNoCard: offers.length > 0 });
+    } else room.act(actorId, 'player_decision', { accept: !botAsker });
   }
-  assert.fail('expected to reach a bot turn');
+  assert.fail('expected a bot to face a second offer');
 }
 
 test('desktop and mobile players see both lobby speeds, countdowns and a real fast-mode bot move', { timeout: 90000 }, async (t) => {
@@ -144,6 +147,12 @@ test('desktop and mobile players see both lobby speeds, countdowns and a real fa
     if (event === 'game_event') events.push(payload);
     publish(code, event, payload);
   });
+  const thinkDelay = BotPlayer.prototype.thinkDelay;
+  t.mock.method(BotPlayer.prototype, 'thinkDelay', function (state, budget) {
+    // Sample a reproducible tail from the actual Fast-mode distribution.
+    const rolls = state.phase === 'DECISION' && state.offers.length === 2 ? [0.01, 0.93] : [0.99, 0.50];
+    return thinkDelay.call(this, state, budget, () => rolls.shift());
+  });
   await button(host, 'התחלת משחק!').click();
   for (const page of [host, guest]) {
     const seconds = await shownSeconds(page);
@@ -151,15 +160,15 @@ test('desktop and mobile players see both lobby speeds, countdowns and a real fa
   }
   assert.equal(room.game.phaseDuration, 15000);
 
-  const findBotMove = () => events.find(({ type, playerId }) =>
-    room.botBrains.has(playerId) && (type === 'card_requested' || type === 'card_offered'));
-  if (!findBotMove()) {
-    advanceToBot(room);
-    const startedAt = room.game.phaseStartedAt;
-    const botMove = await until(findBotMove, 7500);
-    assert.ok(botMove.at - startedAt <= 7500, 'fast bot acted well before its deadline');
-  }
-  assert.ok(findBotMove());
+  prepareSecondOffer(room);
+  const { actorId, phaseStartedAt, deadline } = room.game;
+  const offerEvents = events.length;
+  await countdown(guest).getByText(/^[345]$/).waitFor({ timeout: 12500 });
+  const botMove = await until(() => events.slice(offerEvents).find(({ type, playerId, toId }) =>
+    (type === 'card_transferred' && toId === actorId) ||
+    (playerId === actorId && (type === 'lie_deye_used' || type === 'offer_rejected'))));
+  assert.ok(botMove.at - phaseStartedAt >= 10000, 'tense reply went past the old fast-mode cap');
+  assert.ok(botMove.at < deadline - 1000, 'bot replied with time left on the Fast clock');
   assert.ok(events.every(({ type }) => type !== 'timeout'));
   assert.deepEqual(errors, []);
 });
