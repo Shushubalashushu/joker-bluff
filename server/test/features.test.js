@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { setTimeout: wait } = require('node:timers/promises');
 
 const { JokerBluffGame } = require('../src/game/JokerBluffGame');
 const { findWinningRank } = require('../src/game/deck');
@@ -396,6 +397,54 @@ function makeRoom(n = 4) {
     return s;
   });
   return { room, sessions, players, sent };
+}
+
+for (const [speed, duration] of [['fast', 15000], ['standard', 120000]]) {
+  test(`${speed} room clocks cover every move, Lie Deye, timeouts and rematches`, async () => {
+    const { room, players, sent } = makeRoom();
+    const hostId = players[0].playerId;
+    try {
+      room.setTurnSpeed(hostId, speed);
+      room.startGame(hostId);
+      const game = room.game;
+      const clock = () => {
+        assert.equal(game.phaseDuration, duration);
+        assert.ok(game.deadline - Date.now() <= duration);
+        assert.ok(game.deadline - Date.now() > duration - 1000);
+      };
+      const expire = async (phase) => {
+        assert.equal(game.phase, phase);
+        clock();
+        game.deadline = Date.now() - 500;
+        room._schedule();
+        for (let i = 0; game.phase === phase && i < 50; i++) await wait(5);
+        assert.notEqual(game.phase, phase);
+      };
+      await expire('REQUEST');
+      await expire('OFFER');
+      clock();
+      assert.equal(game.offers[0].auto, true);
+      room.act(game.activeId, 'use_lie_deye');
+      assert.equal(sent.find(({ payload }) => payload?.type === 'lie_deye_used').payload.durationMs, duration);
+      await expire('DECISION');
+      assert.deepEqual(sent.filter(({ payload }) => payload?.type === 'timeout').map(({ payload }) => payload.phase),
+        ['REQUEST', 'OFFER', 'DECISION']);
+
+      if (!game.isFinished) playAutoWin(game, (pid, event, payload) => room.act(pid, event, payload));
+      assert.throws(() => room.setTurnSpeed(hostId, 'fast'), { code: 'IN_PROGRESS' });
+      room.startGame(hostId, { rematch: true });
+      assert.equal(room.publicState().turnSpeed, speed);
+      assert.equal(room.game.phaseDuration, duration);
+
+      room.endGame(hostId);
+      const alternateMode = speed === 'fast' ? 'standard' : 'fast';
+      room.setTurnSpeed(hostId, alternateMode);
+      room.startGame(hostId);
+      assert.equal(room.game.phaseDuration, alternateMode === 'fast' ? 15000 : 120000);
+    } finally {
+      room.destroy();
+    }
+  });
 }
 
 test('room: nickname edits update the seat and session only while waiting', () => {

@@ -8,7 +8,7 @@ const { findWinningRank } = require('../src/game/deck');
 const config = require('../src/config');
 
 const MOVE_EVENTS = new Set(['request_card', 'offer_card', 'player_decision', 'use_lie_deye']);
-const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player', 'add_bot', 'remove_bot']);
+const HOST_EVENTS = new Set(['start_game', 'play_again', 'end_game', 'kick_player', 'add_bot', 'remove_bot', 'set_turn_speed']);
 
 /** Small client wrapper that tracks the latest pushed state. */
 function client(url, auth = {}) {
@@ -76,6 +76,25 @@ function withWaitingLobby(names, run) {
     await run({ server, seated, code: created.code, connectGuest });
   });
 }
+
+test('turn speed is broadcast, validated and scoped to the host of a waiting lobby', () =>
+  withWaitingLobby(['Host', 'Guest', 'Mika', 'Roni'], async ({ seated }) => {
+    const [host, guest] = seated;
+    const waitingId = host.room.lifecycleId;
+    assert.ok(seated.every((player) => player.room.turnSpeed === 'standard'));
+    assert.equal((await guest.emit('set_turn_speed', { speed: 'fast' })).code, 'NOT_HOST');
+    for (const speed of [undefined, 15000, { value: 'fast' }, 'unsupported']) {
+      assert.equal((await host.emit('set_turn_speed', { speed })).code, 'BAD_TURN_SPEED');
+    }
+    assert.equal((await host.emit('set_turn_speed', { speed: 'fast', lifecycleId: null })).code, 'STALE_ACTION');
+    assert.equal((await host.emit('set_turn_speed', { speed: 'fast' })).ok, true);
+    await until(() => seated.every((player) => player.room.turnSpeed === 'fast'));
+    assert.equal((await host.emit('start_game')).ok, true);
+    await until(() => seated.every((player) => player.game?.phaseDuration === 15000));
+    assert.equal((await host.emit('set_turn_speed', { speed: 'standard', lifecycleId: waitingId })).code, 'STALE_ACTION');
+    assert.equal((await host.emit('set_turn_speed', { speed: 'standard' })).code, 'IN_PROGRESS');
+    assert.ok(seated.every((player) => player.room.turnSpeed === 'fast'));
+  }));
 
 test('the lobby host can manage bot seats and start solo play over Socket.IO', { timeout: 8000 }, () =>
   withWaitingLobby(['Host', 'Guest'], async ({ server, seated: [host, guest], code }) => {
@@ -352,7 +371,7 @@ async function scenario(url, clients) {
   assert.equal(ld.ok, true);
   await until(() => active.game.lieDeye);
   assert.equal(active.game.timeFrozen, true);
-  assert.equal(active.game.phaseDuration, config.TIMERS.LIE_DEYE);
+  assert.equal(active.game.phaseDuration, config.TURN_SPEEDS[host.room.turnSpeed]);
   assert.equal(active.game.lieDeye.touches.length, 2);
   assert.equal(active.game.lieDeye.pressDurationMs, Math.min(350, active.game.lieDeye.decisionMs));
   assert.equal(active.game.lieDeye.offeredSlot, 0);

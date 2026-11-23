@@ -165,6 +165,25 @@ test('bot pacing samples a broad 2–15s range and adapts to shorter decision cl
   assert.equal(botThinkDelay(0, random), 0);
 });
 
+test('fast rooms give bots a shorter think budget and bots act before the normal timeout', async () => {
+  const budgets = [];
+  const { room, botIds, publicEvents } = setupRoom(1, 3, { botDelay: (budget) => {
+    budgets.push(budget);
+    return 0;
+  } });
+  try {
+    room.setTurnSpeed(room.hostId, 'fast');
+    room.startGame(room.hostId);
+    if (room.game.actorId === room.hostId) humanMove(room, room.hostId);
+    for (let i = 0; !publicEvents.some((event) => botIds.includes(event.playerId)) && i < 50; i++) await wait(5);
+    assert.ok(publicEvents.some((event) => botIds.includes(event.playerId)));
+    assert.ok(publicEvents.every((event) => event.type !== 'timeout'));
+    assert.ok(budgets.length > 0 && budgets.every((budget) => budget === 6500));
+  } finally {
+    room.destroy();
+  }
+});
+
 test('a bot can force a third card after a private paid Lie Deye reading', () => {
   const bot = new BotPlayer('detective', () => 0.1);
   const game = new JokerBluffGame(['one', 'two', 'three', 'four'], { rng: randomFrom(73) });

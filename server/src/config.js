@@ -7,11 +7,8 @@ const int = (value, fallback, min = 1, max = 2147483647) => {
 };
 
 /**
- * 🧪 DEVELOPER TESTING MODE (temporary)
- * Stretches every turn timer to DEV_TIMER_MS (10 minutes) so the UI can be
- * tested/debugged without the clock running out. The timer LOGIC is unchanged -
- * only the durations are. Set to `false` (or run with DEV_TESTING_MODE=0)
- * before shipping to restore the real 15s / 15s / 10s / 60s timers.
+ * Standalone game defaults. Private rooms override the online move and review
+ * clocks with the selected speed.
  */
 const DEV_TESTING_MODE = process.env.DEV_TESTING_MODE ? process.env.DEV_TESTING_MODE !== '0' : true;
 const DEV_TIMER_MS = 600 * 1000;
@@ -34,6 +31,8 @@ module.exports = Object.freeze({
   DEV_TESTING_MODE,
   MIN_PLAYERS: int(process.env.MIN_PLAYERS, HARD_MIN_PLAYERS, HARD_MIN_PLAYERS, MAX_PLAYERS),
   MAX_PLAYERS,
+  TURN_SPEEDS: Object.freeze({ fast: 15000, standard: 120000 }),
+  DEFAULT_TURN_SPEED: 'standard',
 
   // Phase timers (ms). The server is the only clock that matters.
   TIMERS: Object.freeze({
@@ -43,8 +42,7 @@ module.exports = Object.freeze({
     // Used instead of the above when the acting player is disconnected,
     // so the table isn't held hostage by someone who closed the app.
     AFK: int(process.env.TIMER_AFK_MS, 3000, 1, 2147483000),
-    // "Lie Deye" token: freezes the decision clock at a full minute
-    // (dev mode: same 10 minutes, so a token never SHORTENS the clock).
+    // Standalone Lie Deye review clock. Rooms reset this to their move duration.
     LIE_DEYE: timer('TIMER_LIE_DEYE_MS', 60000),
   }),
 

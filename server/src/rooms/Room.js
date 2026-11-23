@@ -10,6 +10,8 @@ const { BotPlayer, PERSONALITIES, botThinkDelay } = require('../game/BotPlayer')
 
 const ROOM_STATUS = Object.freeze({ WAITING: 'waiting', PLAYING: 'playing', FINISHED: 'finished' });
 const ACTION_GRACE_MS = 250; // latency allowance before the server auto-plays
+const BOT_DEADLINE_BUFFER_MS = 250;
+const FAST_BOT_MAX_THINK_MS = 6500;
 const BOT_HISTORY_LIMIT = 192;
 const BOT_NAMES = [
   ['Bamba', 'במבה'], ['Boba', 'בובה'], ['Coco', 'קוקו'], ['Gigi', 'ג׳יג׳י'],
@@ -54,6 +56,7 @@ class Room {
     /** @type {{id: string, nickname: string, avatarId: number, isBot?: boolean, botName?: {en: string, he: string}}[]} lobby order */
     this.players = [];
     this.status = ROOM_STATUS.WAITING;
+    this.turnSpeed = config.DEFAULT_TURN_SPEED;
     /** @type {JokerBluffGame|null} */
     this.game = null;
     this.timer = null;
@@ -236,6 +239,17 @@ class Room {
 
   // ------------------------------------------------------------ lifecycle
 
+  setTurnSpeed(byPlayerId, speed) {
+    if (byPlayerId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can change turn speed');
+    this.assertWaiting();
+    if (typeof speed !== 'string' || !Object.hasOwn(config.TURN_SPEEDS, speed)) {
+      throw new GameError('BAD_TURN_SPEED', 'Choose Fast or Standard turn speed');
+    }
+    if (speed === this.turnSpeed) return;
+    this.turnSpeed = speed;
+    this.broadcast();
+  }
+
   startGame(byPlayerId, { rematch = false } = {}) {
     if (byPlayerId !== this.hostId) throw new GameError('NOT_HOST', 'Only the host can start the game');
     const requiredStatus = rematch ? ROOM_STATUS.FINISHED : ROOM_STATUS.WAITING;
@@ -252,10 +266,12 @@ class Room {
     }
 
     const seatIds = shuffle(this.players.map((p) => p.id), this.setupRandom);
+    const moveMs = config.TURN_SPEEDS[this.turnSpeed];
     const game = new JokerBluffGame(
       seatIds,
       {
         isConnected: (id) => this._ready(this.players.find((p) => p.id === id)),
+        timers: { REQUEST: moveMs, OFFER: moveMs, DECISION: moveMs, LIE_DEYE: moveMs },
         // Carry-over: each player brings their current room balance into the match.
         tokenBalances: new Map(this.players.map((p) => [p.id, this.tokenBalance(p.id)])),
       }
@@ -361,6 +377,7 @@ class Room {
       lifecycleId: this.lifecycleId,
       hostId: this.hostId,
       status: this.status,
+      turnSpeed: this.turnSpeed,
       minPlayers: config.MIN_PLAYERS,
       maxPlayers: config.MAX_PLAYERS,
       players: this.players.map((p) => ({
@@ -476,8 +493,9 @@ class Room {
     const step = game.step;
     if (this.botJob?.game === game && this.botJob.step === step) return;
     this._clearBotJob();
-    const remaining = Math.max(0, game.deadline - Date.now() - 20);
-    const delay = Math.min(this.botDelay(remaining), remaining);
+    const remaining = Math.max(0, game.deadline - Date.now() - BOT_DEADLINE_BUFFER_MS);
+    const budget = this.turnSpeed === 'fast' ? Math.min(remaining, FAST_BOT_MAX_THINK_MS) : remaining;
+    const delay = Math.min(this.botDelay(budget), budget);
     const job = { game, step, timer: null };
     job.timer = setTimeout(() => {
       if (this.botJob !== job) return;

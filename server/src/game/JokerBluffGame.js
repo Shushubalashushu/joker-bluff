@@ -38,7 +38,7 @@ const MAX_OFFERS = 3; // the 3rd offer is chosen deliberately by the holder and 
  * Lie Deye tokens: balances are OWNED BY THE ROOM (they carry over between matches)
  * and passed in via `opts.tokenBalances`. The engine spends from them and enforces
  * the per-match cap (`maxLieDeyeUses`). During DECISION the active player may spend
- * one to (a) reset the clock to a full minute and (b) see the giver's telemetry for
+ * one to (a) start a fresh review clock and (b) see the giver's telemetry for
  * the pending offer (decision time, shuffles, touch heatmap) and the giver's prior lie count.
  */
 class JokerBluffGame {
@@ -226,7 +226,7 @@ class JokerBluffGame {
 
   /**
    * Event `use_lie_deye`: spend 1 token on the pending offer.
-   *  - Time freeze: the decision clock is reset to a full LIE_DEYE window (60s).
+   *  - Time freeze: the decision clock is reset to the configured review window.
    *  - Stats reveal: the giver's telemetry for THIS offer becomes visible to the
    *    active player only (see `lieDeye` in getStateFor).
    * Limits: one per offer, `maxLieDeyeUses` per match, and you need a balance.
@@ -404,7 +404,7 @@ class JokerBluffGame {
         !pending.lieDeyeUsed &&
         this.lieDeyeUsesLeft(viewerId) > 0
       ),
-      // The 60s "time freeze" is running for the pending offer.
+      // The Lie Deye review window is running for the pending offer.
       timeFrozen: !!(pendingDecision && pending.lieDeyeUsed),
       // Giver telemetry - ONLY for the active player, ONLY after they spent a token on this offer.
       lieDeye:

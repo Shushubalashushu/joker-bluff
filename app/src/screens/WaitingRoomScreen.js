@@ -7,6 +7,7 @@ import PlayfulBackground from '../components/common/PlayfulBackground';
 import CartoonButton from '../components/common/CartoonButton';
 import Avatar from '../components/common/Avatar';
 import LobbyActionModal from '../components/lobby/LobbyActionModal';
+import TurnSpeedSelector from '../components/lobby/TurnSpeedSelector';
 import { AUDIO_TOGGLE_SIZE } from '../components/AudioToggle';
 import LanguageToggle from '../components/LanguageToggle';
 import { useI18n } from '../i18n';
@@ -83,7 +84,7 @@ function AbortBanner({ notice, playerId, onClose }) {
 }
 
 export default function WaitingRoomScreen() {
-  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, renamePlayer, addBot, removeBot, notice, clearNotice } = useGame();
+  const { room, playerId, connection, startGame, leaveRoom, kickPlayer, renamePlayer, addBot, removeBot, setTurnSpeed, notice, clearNotice } = useGame();
   const r = useResponsive();
   const { t, tError, textStyle } = useI18n();
   const [busy, setBusy] = useState(null);
@@ -156,6 +157,12 @@ export default function WaitingRoomScreen() {
               <Text style={[styles.shareText, textStyle]}>{t('waiting.invite')}</Text>
             </Pressable>
           </Animated.View>
+
+          <TurnSpeedSelector
+            speed={room.turnSpeed === 'fast' ? 'fast' : 'standard'}
+            onChange={isHost ? (speed) => run('speed', () => setTurnSpeed(speed)) : undefined}
+            disabled={!!busy || connection !== 'online'}
+          />
 
           {/* Dynamic deck preview */}
           <View style={styles.deckPill}>

@@ -84,9 +84,7 @@ if (require.main === module) {
     const { address, port } = server.httpServer.address();
     console.log(`🃏 Joker Bluff server listening on ${address}:${port}`);
     console.log(`   min players: ${config.MIN_PLAYERS} · Lie Deye start: ${config.LIE_DEYE.STARTING_TOKENS} (max ${config.LIE_DEYE.MAX_USES_PER_GAME}/game)`);
-    if (config.DEV_TESTING_MODE) {
-      console.log(`   🧪 DEV_TESTING_MODE: every turn timer = ${config.TIMERS.REQUEST / 1000}s (set DEV_TESTING_MODE=0 for real timers)`);
-    }
+    console.log(`   turn speeds: Fast ${config.TURN_SPEEDS.fast / 1000}s · Standard ${config.TURN_SPEEDS.standard / 1000}s`);
   });
 
   const shutdown = (signal) => {

@@ -19,7 +19,7 @@ import { colors, fonts } from '../../theme';
  * The bar starts from the TRUE remaining fraction (deadline - serverNow) and
  * drains linearly on the UI thread, so all phones hit zero together.
  *
- * `frozen`: a Lie Deye token reset the clock to a full 60s - the bar turns icy
+ * `frozen`: a Lie Deye token reset the review clock - the bar turns icy
  * blue and shows "👁️ Time frozen" so everyone at the table knows.
  */
 export default function TimerBar({ deadline, duration, clockOffset, label, frozen = false, compact = false }) {
@@ -27,7 +27,9 @@ export default function TimerBar({ deadline, duration, clockOffset, label, froze
   const progress = useSharedValue(1);
   const pulse = useSharedValue(1);
   const remaining = useServerCountdown(deadline, clockOffset);
-  const seconds = Math.ceil(remaining / 1000);
+  const seconds = Math.ceil(Math.min(remaining, duration) / 1000);
+  const showMinutes = duration >= 60000;
+  const countdown = showMinutes ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : seconds;
   const urgent = remaining > 0 && remaining <= (frozen ? 5000 : 3000);
 
   useEffect(() => {
@@ -76,23 +78,18 @@ export default function TimerBar({ deadline, duration, clockOffset, label, froze
       <View
         style={[
           styles.badge,
-          { width: badge, height: badge, borderRadius: badge / 2 },
+          { width: showMinutes ? badge + 12 : badge, height: badge, borderRadius: badge / 2 },
           frozen && { backgroundColor: colors.teal },
           urgent && { backgroundColor: colors.red },
         ]}
       >
-        {/* 3-digit values (DEV_TESTING_MODE's 600s timers) shrink to fit the round badge. */}
         <Text
-          style={[
-            styles.seconds,
-            compact && { fontSize: 15 },
-            seconds >= 100 && { fontSize: compact ? 11 : 13, letterSpacing: -0.5 },
-          ]}
+          style={[styles.seconds, (compact || showMinutes) && { fontSize: 15 }]}
           numberOfLines={1}
           adjustsFontSizeToFit
           minimumFontScale={0.6}
         >
-          {deadline ? seconds : '–'}
+          {deadline ? countdown : '–'}
         </Text>
       </View>
     </Animated.View>

@@ -191,6 +191,10 @@ function registerSocketHandlers(io, { sessions, rooms }) {
       currentRoom(p.lifecycleId ?? null).removeBot(session.playerId, p.botId);
     });
 
+    on(C2S.SET_TURN_SPEED, (p) => {
+      currentRoom(p.lifecycleId ?? null).setTurnSpeed(session.playerId, p.speed);
+    });
+
     on(C2S.START_GAME, (p) => {
       currentRoom(p.lifecycleId ?? null).startGame(session.playerId);
     });

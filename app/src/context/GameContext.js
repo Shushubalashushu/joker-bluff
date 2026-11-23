@@ -143,6 +143,7 @@ export function GameProvider({ children }) {
   const kickPlayer = useCallback((playerId) => emitAck(C2S.KICK_PLAYER, { lifecycleId, playerId }), [lifecycleId]);
   const addBot = useCallback(() => emitAck(C2S.ADD_BOT, { lifecycleId }), [lifecycleId]);
   const removeBot = useCallback((botId) => emitAck(C2S.REMOVE_BOT, { lifecycleId, botId }), [lifecycleId]);
+  const setTurnSpeed = useCallback((speed) => emitAck(C2S.SET_TURN_SPEED, { lifecycleId, speed }), [lifecycleId]);
   const renamePlayer = useCallback((nickname) => emitAck(C2S.UPDATE_PROFILE, { lifecycleId, nickname }), [lifecycleId]);
   const startGame = useCallback(() => emitAck(C2S.START_GAME, { lifecycleId }), [lifecycleId]);
   const playAgain = useCallback(() => emitAck(C2S.PLAY_AGAIN, { lifecycleId }), [lifecycleId]);
@@ -181,6 +182,7 @@ export function GameProvider({ children }) {
       kickPlayer,
       addBot,
       removeBot,
+      setTurnSpeed,
       renamePlayer,
       startGame,
       playAgain,
@@ -202,6 +204,7 @@ export function GameProvider({ children }) {
       kickPlayer,
       addBot,
       removeBot,
+      setTurnSpeed,
       renamePlayer,
       startGame,
       playAgain,

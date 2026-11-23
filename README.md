@@ -49,10 +49,10 @@ npm install
 npm start            # → :3001   (npm run dev for watch mode)
 npm test             # engine unit tests + socket integration test
 ```
-Environment overrides include `PORT`, `CORS_ORIGIN`, `MIN_PLAYERS` (4–8), `DEV_TESTING_MODE`, `TIMER_REQUEST_MS`, `TIMER_OFFER_MS`, `TIMER_DECISION_MS`, `TIMER_AFK_MS`, `TIMER_LIE_DEYE_MS`, `LIE_DEYE_STARTING_TOKENS`, `LIE_DEYE_MAX_USES` (0–3), `LIE_DEYE_WIN_BONUS`, `DISCONNECT_GRACE_MS`, `EMPTY_ROOM_TTL_MS`, and `SESSION_TTL_MS`.
+Environment overrides include `PORT`, `CORS_ORIGIN`, `MIN_PLAYERS` (4–8), `TIMER_AFK_MS`, `LIE_DEYE_STARTING_TOKENS`, `LIE_DEYE_MAX_USES` (0–3), `LIE_DEYE_WIN_BONUS`, `DISCONNECT_GRACE_MS`, `EMPTY_ROOM_TTL_MS`, and `SESSION_TTL_MS`.
 
-> [!WARNING]
-> **Developer testing mode is on by default.** Request, offer, decision, and Lie Deye each default to **600 seconds**. Run `DEV_TESTING_MODE=0 npm start` to use the standard durations. The separate defaults are 3 seconds for a disconnected player's turn and 45 seconds for reconnecting to a reserved seat.
+> [!NOTE]
+> Private rooms use the lobby's selected turn speed for connected players. `DEV_TESTING_MODE` and the individual phase timer overrides still apply to games constructed outside a room. Disconnected players have a separate 3-second move clock and a 45-second reconnection window by default.
 
 ### App
 ```bash
@@ -78,6 +78,13 @@ If you set `PUBLIC_SERVER_URL` to `""`, the app falls back to `EXPO_PUBLIC_SERVE
 
 To play locally, create a private lobby on any device or simulator. Invite friends with the room code or add bots until you have at least four seats.
 
+The Playwright suite verifies both speeds in Chromium with desktop and mobile viewports. With the server and app dependencies installed, run these commands from `app/`. The suite builds and serves its own local Expo web bundle.
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
 ## Game rules as implemented
 
 | Rule | Implementation |
@@ -90,7 +97,7 @@ To play locally, create a private lobby on any device or simulator. Invite frien
 | 3rd offer | After 2 rejections the holder has exactly 3 cards in hand. They choose one, and it is **auto-accepted** (there is no decision phase). |
 | After a transfer | Every unchosen card returns to the giver. The receiver now has 5 cards and becomes the new holder. The seat after them becomes the new active player. |
 | Win / loss | After a successful transfer, the giver wins automatically if passing their fifth card leaves exactly four cards of one rank. Rejected cards return before the win check. Whoever owns the Joker after the transfer loses. |
-| Timers | Request 15s · Offer 15s · Decision 10s (60s after a Lie Deye); **600s each while `DEV_TESTING_MODE` is on**. When time runs out the server makes the move: it asks for your most-held rank, offers a **completely random card** from the holder's hand (it may or may not be the requested rank), or accepts. A disconnected player's timer drops to 3s. |
+| Timers | The host selects **Fast** (15 seconds) or **Standard** (2 minutes, the default) in the private lobby. Everyone can see the selection. Each request, offer and decision gets the full selected time, and the room keeps its selection for rematches. On timeout the server asks for the player's most-held rank, offers a random card, or accepts. A disconnected player's clock can drop to 3 seconds. |
 | Leave mid-match | The deck size depends on the player count, so the match is **terminated**. Everyone gets a `game_aborted` event and goes back to the room's waiting room (same code, same group). |
 | Disconnect | Your seat is kept for 45s. The server auto-plays for disconnected guests during a match. If you don't come back in time, it's handled the same as leaving. |
 | End Game | **Host only.** Terminates the match (or the results screen) and sends everyone back to the waiting room. |
@@ -101,13 +108,13 @@ In a private lobby, the host can select **Add Bot** and tap the remove icon on a
 
 Each match privately assigns a mix of Strategists, Detectives and Bluffers. A bot's name and avatar stay with its lobby seat while its play style can change between matches. Strategists tend to trust new opponents and feed plausible requests. Detectives pay closer attention to past claims. Bluffers make occasional false claims and unexpected requests based on the cards and situation.
 
-Bots use the same turn rules, token balances and win conditions as humans. They play from their own cards and public history, and spend a token to see a private Lie Deye reading. They favor building and protecting sets, can hold a freshly received Joker to slow its circulation, and usually take one of the first two offers. They can force a third offer when they have reason for suspicion. Bot moves take about 2–15 seconds and average 10 seconds when the clock allows the full range. Shorter clocks scale that range down.
+Bots use the same turn rules, token balances and win conditions as humans. They play from their own cards and public history, and spend a token to see a private Lie Deye reading. They favor building and protecting sets, can hold a freshly received Joker to slow its circulation, and usually take one of the first two offers. They can force a third offer when they have reason for suspicion. Bots take about 2–15 seconds per move in Standard mode and about 2–6.5 seconds in Fast mode. Shorter remaining clocks reduce that range.
 
 ### 👁️ Lie Deye tokens
 | | |
 |---|---|
 | Use | During **DECISION**, the active player spends 1 token on the face-down card in front of them. |
-| Effect | The decision clock starts a fresh Lie Deye window (60 seconds in standard mode, 600 seconds in developer mode by default). The VAR overlay shows server-measured decision time, the chosen card's last hold duration, client-reported touches, shuffles, the chosen slot, and a replayable touch heatmap. |
+| Effect | The decision clock starts a fresh review at the selected speed (15 seconds in Fast, 2 minutes in Standard). The VAR overlay shows server-measured decision time, the chosen card's last hold duration, client-reported touches, shuffles, the chosen slot, and a replayable touch heatmap. |
 | Privacy | Only the asking player ever receives the telemetry, and only after spending a token on that offer. Everyone else just sees a 👁️ badge and a toast. Touches are sent keyed by card id. The server converts them to slot positions at offer time, so the heatmap still lines up if the giver shuffled, and card ids are never sent back. |
 | Economy | **4 tokens** for your first game in a room. **Unused tokens carry over** to later games in that room. The **winner gets +1**. You can use at most **3 per game**, however many you have. The room tracks balances on the server (leaving and rejoining doesn't reset them). |
 | Aborted matches | Tokens spent in a match that gets aborted stay spent. |
@@ -130,6 +137,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | `kick_player` | `{ lifecycleId, playerId }` (host only, in the waiting room) |
 | `add_bot` | `{ lifecycleId }` → `{ botId }` (host only, in the waiting room) |
 | `remove_bot` | `{ lifecycleId, botId }` (host only, in the waiting room) |
+| `set_turn_speed` | `{ lifecycleId, speed: 'fast' \| 'standard' }` (host only, in the waiting room) |
 | `start_game`, `play_again`, `end_game` | `{ lifecycleId }` (host only) |
 | `request_card` | `{ matchId, step, rank }` |
 | `offer_card` | `{ matchId, step, cardId, claimedNoCard?: boolean, pressDurationMs?: number, touches?: [{ c, u, v, x, y, t }] }`. The hold duration applies to the chosen card. `c` is the card under the finger, `u,v` the position inside that card, `x,y` the position on screen (all normalized 0–1), and `t` the ms since OFFER started. |
@@ -142,7 +150,7 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 | Server → Client | Meaning |
 |---|---|
 | `session` | `{ token, playerId }`. The client stores `token` and sends it back in `auth` on reconnect to get its seat back. |
-| `room_state` | Public lobby state, the same for everyone (`players[].tokens` = Lie Deye balance), or `null`. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. |
+| `room_state` | Public lobby state, the same for everyone, or `null`. It includes `turnSpeed` and each player's Lie Deye balance. Bot seats include `isBot` and `botName: { en, he }`. Personality assignments stay on the server. |
 | `room_kicked` | Sent to the removed player after their room and game state are cleared. |
 | `game_state` | **This player's own redacted view**: their own hand, opponents' card counts and tokens, face-down offers, public player claims, and private Lie Deye telemetry when eligible. |
 | `game_event` | Public events for toasts and animations. A `card_offered` event includes `claimedNoCard`. The selected offer's claim follows the `card_transferred` event and `lastTransfer`. A `game_aborted` event carries a reason (`player_left`, `player_disconnected`, `host_ended`, or `server_error`). |
@@ -164,5 +172,5 @@ Deploy the app and server together. Host actions use the `lifecycleId` from `roo
 
 ## Regression checks
 
-Run `npm test` from `server/` for the minimum-player rule, token limits, default developer timers, timeout moves, and server-side shuffle behavior. From `app/`, `npx expo export --platform all` checks bundling for iOS, Android, and web. On a device, shuffle several times, tap the new center card, and confirm that the cards visibly change slots. Open and dismiss each lobby keyboard and switch to Hebrew to check that the table and seats retain their positions.
+Run `npm test` from `server/` for the minimum-player rule, token limits, both lobby speeds, rematches, timeout moves, and server-side shuffle behavior. From `app/`, `npm run test:e2e` checks the bilingual turn-speed flow, and `npx expo export --platform all` checks bundling for iOS, Android, and web. On a device, shuffle several times, tap the new center card, and confirm that the cards visibly change slots. Open and dismiss each lobby keyboard and switch to Hebrew to check that the table and seats retain their positions.
 - **Audio:** `AudioToggle` sits at the app root on every screen. `AudioContext.playSfx()` / music are stubs with `TODO(audio)` markers, ready for `expo-audio`.

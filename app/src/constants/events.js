@@ -7,6 +7,7 @@ export const C2S = Object.freeze({
   KICK_PLAYER: 'kick_player',
   ADD_BOT: 'add_bot',
   REMOVE_BOT: 'remove_bot',
+  SET_TURN_SPEED: 'set_turn_speed',
   UPDATE_PROFILE: 'update_profile',
   START_GAME: 'start_game',
   PLAY_AGAIN: 'play_again',
@@ -14,7 +15,7 @@ export const C2S = Object.freeze({
   REQUEST_CARD: 'request_card',
   OFFER_CARD: 'offer_card', // { cardId, touches?, pressDurationMs?, claimedNoCard? }
   PLAYER_DECISION: 'player_decision',
-  USE_LIE_DEYE: 'use_lie_deye', // spend a token during DECISION (60s freeze + VAR stats)
+  USE_LIE_DEYE: 'use_lie_deye', // spend a token during DECISION (fresh review countdown + VAR stats)
   SHUFFLE_HAND: 'shuffle_hand', // reorder my hand (any time)
   // (declare_win removed: victory is automatic after passing your 5th card)
 });
