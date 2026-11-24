@@ -250,10 +250,9 @@ function HandCard({
 }
 
 /** Height the hand needs for a given card size / count (fan arc + lift room). */
-export function handHeight(size, count = 5, liftRoom = LIFT_PX) {
-  const s = CARD_SIZES[size] || CARD_SIZES.md;
+function handHeight(cardHeight, count, liftRoom = LIFT_PX) {
   const center = Math.max(0, (count - 1) / 2);
-  return s.h + liftRoom + 10 + center * center * 5;
+  return cardHeight + liftRoom + 10 + center * center * 5;
 }
 
 /**
@@ -295,16 +294,21 @@ export default function FannedHand({
   const n = cards.length;
   const spread = n > 1 ? Math.min(s.w * 0.8, (containerWidth - s.w - 16) / (n - 1)) : 0;
   const center = (n - 1) / 2;
+  const desktop = s.w > CARD_SIZES.lg.w;
+  // The wider outer corners swing lower. Give them room, including their shadow.
+  const fanInset = desktop ? Math.ceil(s.w * Math.sin(Math.max(0, center) * 7 * Math.PI / 180) / 2) + 2 : 0;
+  const height = desktop ? handHeight(s.h, n) + fanInset + 18
+    : compact ? handHeight(s.h, n, 0) : handHeight(s.h, 5);
   // Outer cards drop by center² * 5 px on the arc - anchor high enough that they
   // never slide under the home indicator / out of the safe area.
-  const bottom = 4 + center * center * 5;
+  const bottom = 4 + center * center * 5 + fanInset;
 
   const slotOf = useMemo(() => new Map(cards.map((c, i) => [c.id, i])), [cards]);
   const stable = useMemo(() => [...cards].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)), [cards]);
 
   return (
     // box-none: the full-width hand strip itself never captures a touch.
-    <View pointerEvents="box-none" style={[styles.container, { height: compact ? handHeight(size, n, 0) : handHeight(size) }]}>
+    <View testID="player-hand" pointerEvents="box-none" style={[styles.container, { height }]}>
       {stable.map((card) => {
         const i = slotOf.get(card.id);
         const rel = i - center;

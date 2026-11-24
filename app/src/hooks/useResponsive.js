@@ -27,6 +27,9 @@ export default function useResponsive() {
     const availW = width - insets.left - insets.right;
     const tier = availH >= 800 ? 'tall' : availH >= 700 ? 'regular' : 'compact';
     const compact = tier === 'compact';
+    const desktopHandCard = availW >= 1200 && availH >= 760 ? 'desktopLg'
+      : availW >= 900 && availH >= 670 ? 'desktop'
+      : availW >= 900 && availH >= 590 ? 'desktopSm' : null;
     return {
       width,
       height,
@@ -38,6 +41,7 @@ export default function useResponsive() {
       tall: tier === 'tall',
       scale: clamp(availW / 390, 0.82, 1.12),
       handCard: availW >= 375 && !compact ? 'lg' : 'md',
+      desktopHandCard,
       tableCard: tier === 'tall' ? 'md' : 'sm',
       seatAvatar: tier === 'tall' ? 54 : tier === 'regular' ? 46 : 40,
       gap: compact ? 4 : tier === 'regular' ? 6 : 10,

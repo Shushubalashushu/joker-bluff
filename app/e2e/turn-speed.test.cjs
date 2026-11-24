@@ -147,19 +147,126 @@ async function selectOfferCard(page, room, lang) {
   return card;
 }
 
-test('desktop and mobile players can moderate lobbies, declare substitutes, and keep playing in both languages', { timeout: 120000 }, async (t) => {
-  const output = await mkdtemp(join(tmpdir(), 'jokerbluff-turn-speed-'));
-  const server = createGameServer();
-  let browser;
-  t.after(async () => {
-    try {
-      await browser?.close();
-      await server.close();
-    } finally {
-      await rm(output, { recursive: true, force: true });
+async function checkDesktopHand(page, count, width) {
+  const geometry = ({ count, width, report }) => {
+    const cards = [...document.querySelectorAll('[data-testid="player-hand"] [role="button"]')];
+    const controls = [...document.querySelectorAll('[data-testid="game-table"], [data-testid="game-actions"], [role="progressbar"]')];
+    if (report) return {
+      viewport: [innerWidth, innerHeight],
+      cards: cards.map((node) => ({ width: getComputedStyle(node).width, bounds: node.getBoundingClientRect().toJSON() })),
+      controls: controls.map((node) => ({ id: node.dataset.testid || node.role, bounds: node.getBoundingClientRect().toJSON() })),
+    };
+    if (cards.length !== count || controls.length !== 3) return false;
+    const controlsBottom = Math.max(...controls.map((node) => node.getBoundingClientRect().bottom));
+    return cards.every((card) => {
+      const { top, left, right, bottom } = card.getBoundingClientRect();
+      return parseFloat(getComputedStyle(card).width) >= width && top > controlsBottom &&
+        left >= 0 && right <= innerWidth && bottom <= innerHeight;
+    });
+  };
+  try {
+    await page.waitForFunction(geometry, { count, width });
+  } catch (error) {
+    assert.fail(`Expected ${count} clear desktop cards at least ${width}px wide. ${JSON.stringify(await page.evaluate(geometry, { report: true }))}`);
+  }
+}
+
+function finishWithFourOfAKind(room) {
+  const { activeId, holderId, hands, ranks } = room.game;
+  const quad = ranks[0];
+  const holderHand = hands.get(holderId);
+  for (const [id, hand] of hands) {
+    if (id === holderId) continue;
+    for (const [index, card] of hand.entries()) {
+      if (card.rank !== quad) continue;
+      const swap = holderHand.findIndex((candidate) => candidate.rank !== quad);
+      [hand[index], holderHand[swap]] = [holderHand[swap], hand[index]];
     }
+  }
+  if (room.game.phase === 'REQUEST') room.act(activeId, 'request_card', { rank: quad });
+  room.act(holderId, 'offer_card', { cardId: holderHand.find((card) => card.rank !== quad).id });
+  room.act(activeId, 'player_decision', { accept: true });
+  assert.equal(room.game.result.winningRank, quad);
+}
+
+async function checkMobileResults(page, lang, count) {
+  const dialog = page.getByRole('dialog');
+  const scroll = dialog.getByTestId('revealed-hands');
+  const summary = dialog.getByTestId('round-summary');
+  const rows = dialog.getByTestId('revealed-hand');
+  await scroll.waitFor();
+  assert.equal(await scroll.getAttribute('aria-label'), lang === 'he' ? 'הקלפים שנחשפו' : 'Revealed hands');
+  assert.equal(await rows.count(), count);
+  const headline = dialog.getByRole('heading');
+  assert.equal(await headline.evaluate((node) => getComputedStyle(node).direction), lang === 'he' ? 'rtl' : 'ltr');
+  const initialHeight = await scroll.evaluate((node) => node.clientHeight);
+  const podium = dialog.getByTestId('round-podium');
+  await podium.locator('[translate="no"]').filter({ hasText: /^A$/ }).waitFor();
+  assert.equal(await summary.evaluate((node) => getComputedStyle(node).opacity), '0');
+  await page.waitForFunction(() => {
+    const region = document.querySelector('[data-testid="revealed-hands"]').getBoundingClientRect();
+    return [...document.querySelectorAll('[data-testid="revealed-hand"]')].filter((row) => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.top >= region.top && bounds.bottom <= region.bottom;
+    }).length >= 2;
   });
 
+  const back = button(page, lang === 'he' ? 'חזרה ללובי' : 'Back to Lobby');
+  const leave = button(page, lang === 'he' ? 'יציאה מהלובי' : 'Leave lobby');
+  const [backBox, leaveBox] = await Promise.all([back.boundingBox(), leave.boundingBox()]);
+  assert.ok(Math.abs(backBox.y - leaveBox.y) < 1 && backBox.x + backBox.width < leaveBox.x);
+
+  await scroll.evaluate((node) => { node.scrollTop = 200; });
+  try {
+    await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('[data-testid="round-summary"]')).opacity) >= 0.99);
+  } catch {
+    const state = await scroll.evaluate((node) => ({
+      offset: node.scrollTop, viewportHeight: node.clientHeight, contentHeight: node.scrollHeight,
+      podiumHeight: node.querySelector('[data-testid="round-podium"]').offsetHeight,
+    }));
+    assert.fail(`Expected the mobile summary to appear while scrolling. ${JSON.stringify(state)}`);
+  }
+  assert.ok((await summary.boundingBox()).height < (await podium.boundingBox()).height / 2);
+  const fullRows = await rows.evaluateAll((nodes) => {
+    const region = document.querySelector('[data-testid="revealed-hands"]').getBoundingClientRect();
+    const summaryBottom = document.querySelector('[data-testid="round-summary"]').getBoundingClientRect().bottom;
+    return nodes.filter((row) => {
+      const bounds = row.getBoundingClientRect();
+      return bounds.top >= summaryBottom && bounds.bottom <= region.bottom;
+    }).length;
+  });
+  assert.ok(fullRows >= 3, `only ${fullRows} full hands are visible while scrolling`);
+
+  for (let i = 0; i < count; i++) {
+    await page.waitForFunction((index) => {
+      const node = document.querySelectorAll('[data-testid="revealed-hand"]')[index];
+      const list = node.closest('[data-testid="revealed-hands"]');
+      const viewport = list.getBoundingClientRect();
+      list.scrollTop += node.getBoundingClientRect().top - viewport.top - 58;
+      const bounds = node.getBoundingClientRect();
+      const cards = [...node.querySelector('[data-testid="revealed-cards"]').children].map((card) => card.getBoundingClientRect());
+      return bounds.top >= viewport.top - 1 && bounds.bottom <= viewport.bottom + 1 && cards.length >= 4 &&
+        cards.every((card) => card.top >= bounds.top + 4 && card.bottom <= bounds.bottom - 4);
+    }, i);
+  }
+  for (const rank of ['J', 'Q', 'K', 'A']) {
+    assert.ok(await scroll.locator('[translate="no"].notranslate').filter({ hasText: new RegExp(`^${rank}$`) }).count() >= 4);
+  }
+  await scroll.evaluate((node) => { node.scrollTop = 0; });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('[data-testid="round-summary"]')).opacity === '0');
+  assert.equal(await scroll.evaluate((node) => node.clientHeight), initialHeight);
+  await back.click();
+  await dialog.waitFor({ state: 'detached' });
+}
+
+let output;
+let server;
+let url;
+let browser;
+
+test.before(async () => {
+  output = await mkdtemp(join(tmpdir(), 'jokerbluff-turn-speed-'));
+  server = createGameServer();
   server.app.use(express.static(output, {
     setHeaders(response) {
       if (!securityHeaderPath.test(response.req.path)) return;
@@ -168,7 +275,7 @@ test('desktop and mobile players can moderate lobbies, declare substitutes, and 
   }));
   server.httpServer.listen(0, '127.0.0.1');
   await once(server.httpServer, 'listening');
-  const url = `http://127.0.0.1:${server.httpServer.address().port}`;
+  url = `http://127.0.0.1:${server.httpServer.address().port}`;
   const expo = join(dirname(require.resolve('expo/package.json')), 'bin', 'cli');
   await promisify(execFile)(process.execPath, [expo, 'export', '--clear', '--platform', 'web', '--max-workers', '4', '--output-dir', output], {
     cwd: dirname(__dirname),
@@ -177,6 +284,18 @@ test('desktop and mobile players can moderate lobbies, declare substitutes, and 
   });
 
   browser = await chromium.launch();
+});
+
+test.after(async () => {
+  try {
+    await browser?.close();
+    await server?.close();
+  } finally {
+    if (output) await rm(output, { recursive: true, force: true });
+  }
+});
+
+test('desktop and mobile players can moderate lobbies, declare substitutes, and keep playing in both languages', { timeout: 90000 }, async (t) => {
   const host = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const guest = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const errors = [];
@@ -400,5 +519,61 @@ test('desktop and mobile players can moderate lobbies, declare substitutes, and 
   room.disconnectGraceMs = 30;
   await guest.close();
   await until(() => room.game === null && room.isEmpty);
+  assert.deepEqual(errors, []);
+});
+
+test('desktop fan clears the controls and mobile results show complete hands in English and Hebrew', { timeout: 45000 }, async () => {
+  const errors = [];
+  const mobile = await browser.newPage({ viewport: { width: 375, height: 610 }, isMobile: true, hasTouch: true });
+  const desktop = await browser.newPage({ viewport: { width: 1440, height: 860 } });
+  for (const page of [mobile, desktop]) {
+    page.setDefaultTimeout(6000);
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(url);
+    await page.getByRole('textbox', { name: 'Nickname' }).fill(page === mobile ? 'Mobile Host' : 'Desktop Guest');
+    await button(page, 'Private Game').click();
+  }
+  await button(mobile, 'Create Private Lobby').click();
+  const layoutRoom = await until(() => [...server.rooms.rooms.values()].find((entry) => entry.nicknameOf(entry.hostId) === 'Mobile Host'));
+  await desktop.getByRole('textbox', { name: 'Enter room code' }).fill(layoutRoom.code);
+  await button(desktop, 'Join').click();
+  await desktop.getByText('Standard · 2 minutes', { exact: true }).waitFor();
+  for (let i = 0; i < 2; i++) {
+    await button(mobile, 'Add Bot').click();
+    await until(() => layoutRoom.players.length === i + 3);
+  }
+  layoutRoom.setupRandom = () => 0.999999;
+  layoutRoom.botDelay = () => 20000;
+  await button(mobile, 'Start Game!').click();
+  await countdown(desktop).waitFor();
+
+  advanceToHolder(layoutRoom, layoutRoom.hostId);
+  await checkDesktopHand(desktop, 4, 128);
+  await desktop.setViewportSize({ width: 1280, height: 690 });
+  await checkDesktopHand(desktop, 4, 104);
+  const mobileCard = mobile.getByTestId('player-hand').getByRole('button').first();
+  assert.equal(await mobileCard.evaluate((card) => getComputedStyle(card).width), '42px');
+
+  const desktopId = layoutRoom.game.activeId;
+  advanceToHolder(layoutRoom, desktopId);
+  layoutRoom.act(layoutRoom.game.activeId, 'request_card', { rank: 'A' });
+  await checkDesktopHand(desktop, 5, 104);
+  await desktop.setViewportSize({ width: 1440, height: 860 });
+  await selectOfferCard(desktop, layoutRoom, 'en');
+  await checkDesktopHand(desktop, 5, 128);
+
+  finishWithFourOfAKind(layoutRoom);
+  await desktop.getByRole('dialog').getByTestId('round-podium').waitFor();
+  assert.equal(await desktop.getByTestId('round-summary').count(), 0);
+  await checkMobileResults(mobile, 'en', 4);
+  await button(mobile, 'Add Bot').waitFor();
+  await mobile.waitForFunction(() => document.querySelectorAll('[aria-label="Switch language (English / Hebrew)"]').length === 1);
+  await button(mobile, 'Switch language (English / Hebrew)').tap();
+  await mobile.waitForFunction(() => document.documentElement.lang === 'he');
+  while (layoutRoom.players.length < 8) layoutRoom.addBot(layoutRoom.hostId);
+  layoutRoom.startGame(layoutRoom.hostId);
+  await countdown(mobile).waitFor();
+  finishWithFourOfAKind(layoutRoom);
+  await checkMobileResults(mobile, 'he', 8);
   assert.deepEqual(errors, []);
 });

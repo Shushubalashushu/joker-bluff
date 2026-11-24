@@ -10,6 +10,9 @@ export const CARD_SIZES = {
   sm: { w: 42, h: 60, rank: 15, pip: 22, radius: 8 },
   md: { w: 58, h: 84, rank: 19, pip: 32, radius: 11 },
   lg: { w: 74, h: 106, rank: 24, pip: 42, radius: 13 },
+  desktopSm: { w: 86, h: 122, rank: 28, pip: 48, radius: 14 },
+  desktop: { w: 104, h: 148, rank: 34, pip: 58, radius: 16 },
+  desktopLg: { w: 128, h: 182, rank: 41, pip: 70, radius: 19 },
 };
 
 const SUIT = {

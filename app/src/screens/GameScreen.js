@@ -44,10 +44,14 @@ function confirmMatchAction(title, message, cancel, confirm, onConfirm) {
 }
 
 /** Splits opponents (clockwise from my left) into left column / top row / right column. */
-function layoutSeats(seats, myId) {
+function layoutSeats(seats, myId, wideRow) {
   const me = seats.findIndex((s) => s.id === myId);
   const ordered = me === -1 ? seats : [...seats.slice(me + 1), ...seats.slice(0, me)];
   const n = ordered.length;
+  if (wideRow) {
+    const split = Math.ceil(n / 2);
+    return { left: ordered.slice(0, split).reverse(), top: [], right: ordered.slice(split), compact: n >= 5 };
+  }
   const side = n >= 6 ? 2 : n >= 4 ? 1 : 0;
   return {
     left: ordered.slice(0, side).reverse(), // first seat after me sits bottom-left
@@ -335,19 +339,23 @@ export default function GameScreen() {
 
   const isolated = game.isolated; // server says I'm not part of this transaction
   const canOffer = !finished && isHolder && game.phase === PHASES.OFFER && !busy;
-  const { left, top, right, compact: crowded } = layoutSeats(game.seats, playerId);
+  const dockHandTools = !!r.desktopHandCard;
+  const shortDesktop = dockHandTools && r.availH < 800;
+  const { left, top, right, compact: crowded } = layoutSeats(game.seats, playerId, shortDesktop);
   const me = playersById[playerId];
   const mySeat = game.seats.find((s) => s.id === playerId);
   const myRole = isHolder ? 'GIVER' : playerId === game.activeId ? 'ASKER' : null;
   const choosing = myRole === 'ASKER' && game.phase === PHASES.DECISION && game.offers.length === 2;
   const newCardId = game.lastTransfer && game.lastTransfer.turn === game.turn - 1 ? game.lastTransfer.cardId : null;
   const sideCount = Number(left.length > 0) + Number(right.length > 0);
-  const sideWidth = Math.min(78, Math.floor(r.availW / 5));
-  const tableWidth = r.availW - 2 * TABLE_PADDING - sideCount * (sideWidth + TABLE_GAP);
+  const maxSide = Math.max(left.length, right.length);
+  const sideWidth = Math.min(78, Math.floor(r.availW / (shortDesktop ? 2 * maxSide + 4 : 5)));
+  const sideColumnWidth = shortDesktop ? maxSide * sideWidth + Math.max(0, maxSide - 1) * r.gap : sideWidth;
+  const tableWidth = r.availW - 2 * TABLE_PADDING - sideCount * (sideColumnWidth + TABLE_GAP);
   const tight = r.compact || (crowded && r.tier !== 'tall');
   const compactChoice = choosing && tight;
   const showLieDeye = lieDeyeOpen && !!game.lieDeye && game.phase === PHASES.DECISION;
-  const seatSize = compactChoice ? 32 : crowded ? Math.min(r.seatAvatar, 44) : r.seatAvatar;
+  const seatSize = compactChoice || shortDesktop ? 32 : crowded ? Math.min(r.seatAvatar, 44) : r.seatAvatar;
 
   const timerLabel = finished
     ? t('timer.over')
@@ -440,12 +448,16 @@ export default function GameScreen() {
 
         <ScrollView {...verticalScrollProps} style={styles.board} contentContainerStyle={styles.boardContent} showsVerticalScrollIndicator={false}>
           {/* Opponents (top) */}
-          <View style={[styles.topRow, compactChoice && styles.topRowCompact, { gap: r.gap }]}>{top.map((seat) => renderSeat(seat))}</View>
+          {!!top.length && <View style={[styles.topRow, compactChoice && styles.topRowCompact, { gap: r.gap }]}>{top.map((seat) => renderSeat(seat))}</View>}
 
           {/* Opponents (sides) + table */}
           <View style={[styles.middle, compactChoice && styles.middleCompact]}>
-            {!!left.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{left.map((seat) => renderSeat(seat, sideWidth))}</View>}
-            <View style={styles.tableWrap}>
+            {!!left.length && (
+              <View style={[styles.sideCol, shortDesktop && styles.sideRowLeft, { width: sideColumnWidth, gap: r.gap }]}>
+                {left.map((seat) => renderSeat(seat, sideWidth))}
+              </View>
+            )}
+            <View style={styles.tableWrap} testID="game-table">
               <TableArea
                 game={game}
                 nameOf={nameOf}
@@ -456,7 +468,11 @@ export default function GameScreen() {
                 compact={tight || choosing}
               />
             </View>
-            {!!right.length && <View style={[styles.sideCol, { width: sideWidth, gap: r.gap }]}>{right.map((seat) => renderSeat(seat, sideWidth))}</View>}
+            {!!right.length && (
+              <View style={[styles.sideCol, shortDesktop && styles.sideRowRight, { width: sideColumnWidth, gap: r.gap }]}>
+                {right.map((seat) => renderSeat(seat, sideWidth))}
+              </View>
+            )}
           </View>
 
           <View pointerEvents="box-none" style={[styles.bottom, { gap: tight ? 4 : 8 }]}>
@@ -482,7 +498,7 @@ export default function GameScreen() {
 
             {/* My seat + hand tools + fanned hand */}
             <View pointerEvents="box-none" style={styles.handArea}>
-              <View style={styles.meRow}>
+              <View pointerEvents="box-none" style={[styles.meRow, dockHandTools && styles.dockedHandTools]}>
                 <View style={styles.meInfo}>
                   <Avatar avatarId={me?.avatarId ?? 0} size={30} ring={myRole ? colors.yellow : colors.night} />
                   <Text style={[styles.meName, textStyle]}>{t('common.you')}</Text>
@@ -530,7 +546,7 @@ export default function GameScreen() {
                 newCardId={newCardId}
                 concealed={concealed}
                 resetKey={`${moveKey}:${resetNonce}`}
-                size={tight ? 'sm' : r.handCard}
+                size={r.desktopHandCard ?? (tight ? 'sm' : r.handCard)}
                 width={r.availW}
                 compact={compactChoice}
               />
@@ -619,10 +635,13 @@ const styles = StyleSheet.create({
   middle: { flexGrow: 1, flexShrink: 0, flexDirection: 'row', alignItems: 'center', paddingHorizontal: TABLE_PADDING, paddingVertical: 6, gap: TABLE_GAP },
   middleCompact: { paddingVertical: 3 },
   sideCol: { flexShrink: 0, justifyContent: 'center' },
+  sideRowLeft: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end' },
+  sideRowRight: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start' },
   tableWrap: { flex: 1, minWidth: 0, justifyContent: 'center' },
   bottom: {},
   handArea: { position: 'relative', paddingHorizontal: 12 },
   meRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, paddingHorizontal: 4 },
+  dockedHandTools: { position: 'absolute', top: 4, left: 12, right: 12, zIndex: 1 },
   meInfo: { flexDirection: 'row', alignItems: 'center', gap: 5, flexShrink: 1, minWidth: 0 },
   meName: { fontFamily: fonts.bold, color: colors.white, fontSize: 14 },
   meRole: { borderRadius: 8, borderWidth: 2, borderColor: colors.night, paddingHorizontal: 6, paddingVertical: 1 },

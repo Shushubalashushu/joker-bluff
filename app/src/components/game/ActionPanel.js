@@ -242,6 +242,7 @@ export default function ActionPanel({
   return (
     <Animated.View
       entering={FadeIn}
+      testID="game-actions"
       key={`${game.phase}-${game.turn}-${offerNumber}`}
       style={[
         styles.panel,
